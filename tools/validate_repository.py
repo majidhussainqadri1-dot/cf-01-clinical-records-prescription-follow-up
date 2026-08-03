@@ -2,10 +2,11 @@
 """Public-repository safety gate for CF-01 C1-A.
 
 The C1-A phase is governance and architecture only. This validator blocks
-common sensitive artifacts, unreviewed binary files and premature clinical
-runtime code until a later Founder-approved change-control record authorizes
-C1-B. It also requires the public-safe C1-A evidence package and selected
-semantic markers so empty placeholder documents cannot satisfy the gate.
+common sensitive artifacts, unreviewed binary files, supply-chain indirection
+and premature clinical runtime code until a later Founder-approved
+change-control record authorizes C1-B. It also requires the public-safe C1-A
+evidence package and selected semantic markers so empty placeholder documents
+cannot satisfy the gate.
 """
 
 from __future__ import annotations
@@ -146,6 +147,7 @@ FORBIDDEN_RUNTIME_SUFFIXES = {
 
 FORBIDDEN_NAMES = {
     ".env",
+    ".gitmodules",
     "wp-config.php",
     "credentials.json",
     "secrets.json",
@@ -162,7 +164,8 @@ FORBIDDEN_PATH_PARTS = {
 }
 
 # Path separators and punctuation are removed before these tokens are checked,
-# preventing underscore/dot/space variants from bypassing the policy.
+# preventing underscore/dot/space and prefix/suffix variants from bypassing the
+# policy (for example, my_clinical_data_backup).
 FORBIDDEN_NORMALIZED_PATH_TOKENS = {
     "patientdata",
     "clinicaldata",
@@ -214,6 +217,10 @@ SENSITIVE_PATTERNS = {
     ),
     "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"),
+    "Git LFS pointer": re.compile(
+        r"(?m)^version https://git-lfs\.github\.com/spec/v1\s*$"
+    ),
+    "Git LFS filter": re.compile(r"(?m)^\s*\S+\s+filter=lfs\b"),
 }
 
 RUNTIME_CONTENT_PATTERNS = {
@@ -262,7 +269,7 @@ def validate(root: Path) -> list[str]:
             continue
 
         if name_lower in FORBIDDEN_NAMES:
-            errors.append(f"forbidden sensitive file: {relative}")
+            errors.append(f"forbidden sensitive or indirect file: {relative}")
 
         if suffix_lower in FORBIDDEN_SENSITIVE_SUFFIXES:
             errors.append(f"forbidden sensitive artifact: {relative}")
@@ -276,7 +283,11 @@ def validate(root: Path) -> list[str]:
         if normalized_parts & FORBIDDEN_PATH_PARTS:
             errors.append(f"forbidden sensitive path: {relative}")
 
-        if compact_parts & FORBIDDEN_NORMALIZED_PATH_TOKENS:
+        if any(
+            token in compact_part
+            for compact_part in compact_parts
+            for token in FORBIDDEN_NORMALIZED_PATH_TOKENS
+        ):
             errors.append(f"forbidden sensitive path variant: {relative}")
 
         if first_part in FORBIDDEN_RUNTIME_ROOTS:
