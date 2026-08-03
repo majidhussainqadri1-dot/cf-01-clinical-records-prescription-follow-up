@@ -40,15 +40,34 @@ class RepositoryValidatorTests(unittest.TestCase):
             errors = validate(root)
             self.assertTrue(any("sensitive artifact" in error for error in errors))
 
-    def test_runtime_source_is_rejected_during_c1_a(self) -> None:
+    def test_nested_php_runtime_is_rejected_during_c1_a(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_required_files(root)
-            runtime = root / "src" / "ClinicalRecord.php"
+            runtime = root / "docs" / "examples" / "ClinicalRecord.php"
             runtime.parent.mkdir(parents=True)
             runtime.write_text("<?php // synthetic\n", encoding="utf-8")
             errors = validate(root)
-            self.assertTrue(any("not authorized during C1-A" in error for error in errors))
+            self.assertTrue(any("runtime file" in error for error in errors))
+
+    def test_binary_office_artifact_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            (root / "evidence.docx").write_bytes(b"synthetic")
+            errors = validate(root)
+            self.assertTrue(any("binary/data artifact" in error for error in errors))
+
+    def test_symbolic_link_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            target = root / "target.txt"
+            target.write_text("synthetic\n", encoding="utf-8")
+            link = root / "linked.txt"
+            link.symlink_to(target.name)
+            errors = validate(root)
+            self.assertTrue(any("symbolic links" in error for error in errors))
 
     def test_missing_required_document_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
