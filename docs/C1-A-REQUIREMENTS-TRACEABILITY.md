@@ -2,7 +2,7 @@
 
 Status values: `Proposed`, `Drafted`, `In Review`, `Accepted`, `Blocked`, `Superseded`.
 
-A document can be `Drafted` while the phase gate remains `Blocked`. Only qualified, named and versioned acceptance evidence may change an external gate to `Accepted`.
+A document or implementation candidate can be `Drafted` or `In Review` while its phase gate remains `Blocked`. Only qualified, named, versioned and accepted evidence may change an external gate to `Accepted`.
 
 | ID | Requirement | Owner | Current evidence | Acceptance evidence still required | Current status |
 |---|---|---|---|---|---|
@@ -14,8 +14,8 @@ A document can be `Drafted` while the phase gate remains `Blocked`. Only qualifi
 | CF01-A-006 | Establish server-side actor/object/field/purpose/relationship/consent/guardian/version authorization constitution | Security Lead / Clinical Product Owner | foundation and contract decision rules | C1-B executable decision table and negative tests | In Review |
 | CF01-A-007 | Obtain qualified legal/professional applicability review for Pakistan and intended launch jurisdictions | Founder / Qualified Counsel / Records Custodian | applicability register structure | signed qualified jurisdiction decisions, dates and launch gates | Blocked |
 | CF01-A-008 | Define retention, legal hold, correction, export, deletion/anonymization and backup-expiry rules by category and jurisdiction | Records Custodian / Privacy Officer | category matrix and lifecycle workflow | approved durations/formulas, jurisdiction sources and owners | Blocked |
-| CF01-A-009 | Freeze File 00/02 identity, guardian, suspension, recent-auth and capability assertion contract | File 00/02 Owners | required schema drafted in cross-file baseline | owner-approved versioned schema and consumer tests | Blocked |
-| CF01-A-010 | Freeze File 08 appointment/care-context extraction boundary | File 08 Owner / Clinical Product Owner | care-context assertion and ownership limits drafted | current entity inventory, owner approval and extraction criteria | Blocked |
+| CF01-A-009 | Freeze File 00/02 identity, guardian, suspension, recent-auth and capability assertion contract | File 00/02 Owners | File 00 `1.2.7` provider Draft PR #13 and File 02 `0.3.0` consumer Draft PR #4 are implemented, twice reviewed and exact-head CI-green; evidence recorded in `C1-A-CROSS-REPOSITORY-CONTRACT-TRACKING.md` | merge-order resolution, immutable merged-version provider/consumer tests, native-owner acceptance, staging/provider sandbox, privacy/security review and Founder change control | In Review; acceptance blocked |
+| CF01-A-010 | Freeze File 08 appointment/care-context extraction boundary | File 08 Owner / Clinical Product Owner | care-context assertion and ownership limits drafted; native issue #4 open | current entity/field/write-path inventory, implementation candidate, owner approval and extraction criteria | Blocked |
 | CF01-A-011 | Freeze doctor professional-verification contract with Files 03/07/09 | Relevant Module Owners | practitioner assertion drafted | accepted action-time schema and negative tests | Blocked |
 | CF01-A-012 | Define File 17 clinical-context link without treating message bodies as chart records | File 17 Owner / Clinical Product Owner | opaque-reference contract drafted | File 17 owner approval and privacy tests | Blocked |
 | CF01-A-013 | Define File 19 minimal notification contract excluding diagnosis, symptoms, remedy and patient-identifying content | File 19 Owner / Privacy Officer | privacy-minimal payload and prohibited fields drafted | File 19 template/schema approval and leakage tests | Blocked |
@@ -27,7 +27,7 @@ A document can be `Drafted` while the phase gate remains `Blocked`. Only qualifi
 | CF01-A-019 | Link every C1-B+ requirement to owner, test, evidence and release gate before clinical runtime coding | Product Owner / QA Lead | `C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` maps CF01-FR-001–032, migrations, tests and DoD | owner review, complete executable test IDs and Founder C1-A approval | Drafted; runtime blocked |
 | CF01-A-020 | Record Founder C1-A exit approval before entering C1-B | Founder | approval fields and evidence package requirements defined | dated approval with evidence package version and exact SHA | Blocked |
 | CF01-A-021 | Define independent legal, clinical, security, privacy, accessibility and resilience review plan | Founder / Independent Reviewers | `C1-A-INDEPENDENT-REVIEW-PLAN.md` | named assessors, scope approval, dates, completed reports and retests | Drafted |
-| CF01-A-022 | Enforce presence and semantic minimums of the public C1-A governance package in CI | QA / Security | repository validator and tests | green CI on current head and every subsequent change | In Review |
+| CF01-A-022 | Enforce presence and semantic minimums of the public C1-A governance package in CI | QA / Security | repository validator and tests; latest tracking reconciliation run `30828661908` green | green CI on current head and every subsequent change | In Review |
 
 ## Evidence-package inventory
 
@@ -38,6 +38,7 @@ The current public-safe C1-A package consists of:
 - `SECURITY.md`;
 - `docs/C1-A-FOUNDATION.md`;
 - `docs/C1-A-CROSS-FILE-CONTRACTS.md`;
+- `docs/C1-A-CROSS-REPOSITORY-CONTRACT-TRACKING.md`;
 - `docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md`;
 - `docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md`;
 - `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md`;
@@ -49,4 +50,4 @@ The current public-safe C1-A package consists of:
 
 ## Release rule
 
-A blocked requirement is not a concealed defect when it represents an explicit external C1-A gate; however, it blocks promotion to C1-B. No blocked item may be silently marked complete from assumptions, generic legal knowledge, an unaccepted draft, provider marketing, a UI mockup or code presence.
+A blocked requirement is not a concealed defect when it represents an explicit external C1-A gate; however, it blocks promotion to C1-B. No blocked item may be silently marked complete from assumptions, generic legal knowledge, an unaccepted draft or implementation candidate, successful isolated CI, provider marketing, a UI mockup or code presence.
