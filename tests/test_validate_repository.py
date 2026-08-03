@@ -72,11 +72,11 @@ class RepositoryValidatorTests(unittest.TestCase):
             errors = validate(root)
             self.assertTrue(any("binary/data artifact" in error for error in errors))
 
-    def test_sensitive_path_variant_is_rejected(self) -> None:
+    def test_composite_sensitive_path_variant_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_required_files(root)
-            hidden = root / "clinical_data" / "sample.txt"
+            hidden = root / "my_clinical_data_backup" / "sample.txt"
             hidden.parent.mkdir(parents=True)
             hidden.write_text("synthetic\n", encoding="utf-8")
             errors = validate(root)
@@ -92,6 +92,29 @@ class RepositoryValidatorTests(unittest.TestCase):
             link.symlink_to(target.name)
             errors = validate(root)
             self.assertTrue(any("symbolic links" in error for error in errors))
+
+    def test_git_lfs_pointer_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            marker = "version https://git-lfs." + "github.com/spec/v1"
+            (root / "opaque.txt").write_text(
+                f"{marker}\noid sha256:synthetic\nsize 10\n",
+                encoding="utf-8",
+            )
+            errors = validate(root)
+            self.assertTrue(any("Git LFS pointer" in error for error in errors))
+
+    def test_git_submodule_config_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            (root / ".gitmodules").write_text(
+                "[submodule 'external']\npath = external\nurl = example.invalid/repo\n",
+                encoding="utf-8",
+            )
+            errors = validate(root)
+            self.assertTrue(any("indirect file" in error for error in errors))
 
     def test_missing_required_document_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
