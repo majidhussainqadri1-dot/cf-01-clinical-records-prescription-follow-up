@@ -4,7 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.validate_repository import REQUIRED_FILES, REQUIRED_MARKERS, validate
+from tools.validate_repository import (
+    EXPECTED_FUNCTIONAL_REQUIREMENTS,
+    PHASE_TRACEABILITY_PATH,
+    REQUIRED_FILES,
+    REQUIRED_MARKERS,
+    validate,
+)
 
 
 class RepositoryValidatorTests(unittest.TestCase):
@@ -16,6 +22,8 @@ class RepositoryValidatorTests(unittest.TestCase):
             content = "synthetic governance content\n"
             if markers:
                 content += "\n".join(markers) + "\n"
+            if relative == PHASE_TRACEABILITY_PATH:
+                content += "\n".join(sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS)) + "\n"
             path.write_text(content, encoding="utf-8")
 
     def test_clean_governance_repository_passes(self) -> None:
@@ -133,6 +141,20 @@ class RepositoryValidatorTests(unittest.TestCase):
             errors = validate(root)
             self.assertIn(
                 "required governance marker missing from README.md: C1-A governance package",
+                errors,
+            )
+
+    def test_missing_functional_requirement_mapping_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            traceability = root / PHASE_TRACEABILITY_PATH
+            missing = "CF01-FR-032"
+            content = traceability.read_text(encoding="utf-8").replace(missing, "")
+            traceability.write_text(content, encoding="utf-8")
+            errors = validate(root)
+            self.assertIn(
+                f"future-phase traceability missing functional requirement: {missing}",
                 errors,
             )
 
