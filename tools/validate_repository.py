@@ -4,7 +4,8 @@
 The C1-A phase is governance and architecture only. This validator blocks
 common sensitive artifacts, unreviewed binary files and premature clinical
 runtime code until a later Founder-approved change-control record authorizes
-C1-B.
+C1-B. It also requires the public-safe C1-A evidence package and selected
+semantic markers so empty placeholder documents cannot satisfy the gate.
 """
 
 from __future__ import annotations
@@ -16,11 +17,64 @@ from pathlib import Path
 from typing import Iterator
 
 REQUIRED_FILES = {
+    ".github/workflows/governance.yml",
     "README.md",
     "CHANGE_CONTROL.md",
     "SECURITY.md",
     "docs/C1-A-FOUNDATION.md",
+    "docs/C1-A-CROSS-FILE-CONTRACTS.md",
+    "docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md",
+    "docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md",
+    "docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md",
+    "docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md",
+    "docs/C1-A-INDEPENDENT-REVIEW-PLAN.md",
     "docs/C1-A-REQUIREMENTS-TRACEABILITY.md",
+    "tests/test_validate_repository.py",
+    "tools/validate_repository.py",
+}
+
+REQUIRED_MARKERS = {
+    "README.md": (
+        "Current status:",
+        "Activation law",
+        "C1-A governance package",
+    ),
+    "docs/C1-A-CROSS-FILE-CONTRACTS.md": (
+        "Contract constitution",
+        "Canonical ownership matrix",
+        "Freeze gate",
+    ),
+    "docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md": (
+        "Governing rule",
+        "Jurisdiction register",
+        "Current decision",
+    ),
+    "docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md": (
+        "Retention constitution",
+        "Record-category matrix",
+        "Current decision",
+    ),
+    "docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md": (
+        "Security objectives",
+        "Key hierarchy",
+        "Attachment pipeline",
+        "Current decision",
+    ),
+    "docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md": (
+        "Mandatory roles",
+        "Separation-of-duties rules",
+        "Current decision",
+    ),
+    "docs/C1-A-INDEPENDENT-REVIEW-PLAN.md": (
+        "Independence constitution",
+        "Required review streams",
+        "Current decision",
+    ),
+    "docs/C1-A-REQUIREMENTS-TRACEABILITY.md": (
+        "CF01-A-020",
+        "Evidence-package inventory",
+        "Release rule",
+    ),
 }
 
 FORBIDDEN_SENSITIVE_SUFFIXES = {
@@ -174,6 +228,7 @@ def validate(root: Path) -> list[str]:
         errors.append(f"missing required governance file: {required}")
 
     for path, relative in paths:
+        relative_string = str(relative).replace("\\", "/")
         normalized_parts = {part.lower() for part in relative.parts}
         name_lower = path.name.lower()
         suffix_lower = path.suffix.lower()
@@ -218,6 +273,12 @@ def validate(root: Path) -> list[str]:
         except UnicodeDecodeError:
             errors.append(f"non-UTF-8 file requires explicit review: {relative}")
             continue
+
+        for marker in REQUIRED_MARKERS.get(relative_string, ()):
+            if marker not in content:
+                errors.append(
+                    f"required governance marker missing from {relative_string}: {marker}"
+                )
 
         for label, pattern in SENSITIVE_PATTERNS.items():
             if pattern.search(content):
