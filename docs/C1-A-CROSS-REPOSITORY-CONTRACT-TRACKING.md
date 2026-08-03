@@ -1,6 +1,6 @@
 # C1-A Cross-Repository Contract Tracking Register
 
-**Status:** Provider issues opened; no contract is accepted or frozen yet.  
+**Status:** File 00 provider and File 02 consumer candidates are implemented and exact-head CI-green; no contract is accepted, frozen or merged yet.  
 **Parent exit gate:** [CF-01 issue #2](https://github.com/majidhussainqadri1-dot/cf-01-clinical-records-prescription-follow-up/issues/2)  
 **Draft contract baseline:** `docs/C1-A-CROSS-FILE-CONTRACTS.md`
 
@@ -8,17 +8,57 @@
 
 | C1-A requirement | Native owner / repository | Tracking issue | Required outcome | Current status |
 |---|---|---|---|---|
-| CF01-A-009 | File 00 — Membership Core | [Issue #12](https://github.com/majidhussainqadri1-dot/00-sabri-membership-core/issues/12) | versioned membership, age/guardian, suspension, capability and identity-assurance assertion | Open — not accepted |
-| CF01-A-009 | File 02 — Authentication | [Issue #3](https://github.com/majidhussainqadri1-dot/02-sabri-authentication/issues/3) | recent-authentication, step-up and session-assurance assertion | Open — not accepted |
-| CF01-A-010 | File 08 — Clinic/Appointments | [Issue #4](https://github.com/majidhussainqadri1-dot/08-worldwide-clinic-and-appointments-foundation/issues/4) | care-context assertion, current clinical-data inventory and controlled extraction/cutover boundary | Open — not accepted |
-| CF01-A-011 | File 09 coordinating Files 03/07/09 | [Issue #3](https://github.com/majidhussainqadri1-dot/09-global-doctor-onboarding-and-verification-completion/issues/3) | practitioner eligibility, scope, restrictions and action-time verification assertion | Open — not accepted |
-| CF01-A-012 | File 17 — Network/Messages | [Issue #4](https://github.com/majidhussainqadri1-dot/17-sabri-network/issues/4) | opaque clinical-context reference with no automatic message-body/call/attachment copying | Open — not accepted |
-| CF01-A-013 | File 19 — Notifications | [Issue #3](https://github.com/majidhussainqadri1-dot/19-sabri-unified-notifications/issues/3) | privacy-minimal notification request with no clinical narrative or bearer authorization | Open — not accepted |
-| CF01-A-014 | File 20 — Unified Shell | [Issue #7](https://github.com/majidhussainqadri1-dot/20-sabri-unified-application-shell/issues/7) | private route mounting, noindex/no-store, safe links and degraded states | Open — not accepted |
-| CF01-A-014 | File 25 — Visual Components | [Issue #3](https://github.com/majidhussainqadri1-dot/25-sabri-public-ui-profile-timeline-visual-experience/issues/3) | private clinical component, RTL, accessibility and visual-state contract | Open — not accepted |
-| CF01-A-015 | File 24 — Security/Privacy Assurance | [Issue #8](https://github.com/majidhussainqadri1-dot/24-sabri-platform-security-privacy-compliance-and-resilience-center/issues/8) | privacy-minimal assurance manifest with native CF-01 enforcement preserved | Open — not accepted |
+| CF01-A-009 | File 00 — Membership Core | [Issue #12](https://github.com/majidhussainqadri1-dot/00-sabri-membership-core/issues/12) | versioned membership, age/guardian, suspension, capability and identity-assurance assertion | Candidate implemented and CI-green in stacked Draft PR #13; unmerged and not accepted |
+| CF01-A-009 | File 02 — Authentication | [Issue #3](https://github.com/majidhussainqadri1-dot/02-sabri-authentication/issues/3) | recent-authentication, step-up and session-assurance assertion | Candidate implemented and CI-green in Draft PR #4; depends on File 00 PR #13; unmerged and not accepted |
+| CF01-A-010 | File 08 — Clinic/Appointments | [Issue #4](https://github.com/majidhussainqadri1-dot/08-worldwide-clinic-and-appointments-foundation/issues/4) | care-context assertion, current clinical-data inventory and controlled extraction/cutover boundary | Open — not implemented or accepted |
+| CF01-A-011 | File 09 coordinating Files 03/07/09 | [Issue #3](https://github.com/majidhussainqadri1-dot/09-global-doctor-onboarding-and-verification-completion/issues/3) | practitioner eligibility, scope, restrictions and action-time verification assertion | Open — not implemented or accepted |
+| CF01-A-012 | File 17 — Network/Messages | [Issue #4](https://github.com/majidhussainqadri1-dot/17-sabri-network/issues/4) | opaque clinical-context reference with no automatic message-body/call/attachment copying | Open — not implemented or accepted |
+| CF01-A-013 | File 19 — Notifications | [Issue #3](https://github.com/majidhussainqadri1-dot/19-sabri-unified-notifications/issues/3) | privacy-minimal notification request with no clinical narrative or bearer authorization | Open — not implemented or accepted |
+| CF01-A-014 | File 20 — Unified Shell | [Issue #7](https://github.com/majidhussainqadri1-dot/20-sabri-unified-application-shell/issues/7) | private route mounting, noindex/no-store, safe links and degraded states | Open — not implemented or accepted |
+| CF01-A-014 | File 25 — Visual Components | [Issue #3](https://github.com/majidhussainqadri1-dot/25-sabri-public-ui-profile-timeline-visual-experience/issues/3) | private clinical component, RTL, accessibility and visual-state contract | Open — not implemented or accepted |
+| CF01-A-015 | File 24 — Security/Privacy Assurance | [Issue #8](https://github.com/majidhussainqadri1-dot/24-sabri-platform-security-privacy-compliance-and-resilience-center/issues/8) | privacy-minimal assurance manifest with native CF-01 enforcement preserved | Open — not implemented or accepted |
 
-## 2. Freeze criteria for every contract
+## 2. File 00 provider evidence
+
+- Native repository: `majidhussainqadri1-dot/00-sabri-membership-core`.
+- Candidate release: File 00 `1.2.7`.
+- Contract: `smc.cf01.membership-assurance` `1.0.0`.
+- Draft PR: [File 00 PR #13](https://github.com/majidhussainqadri1-dot/00-sabri-membership-core/pull/13).
+- Base dependency: File 00 Draft PR #11 / branch `codex/file00-ilhami-cycle-1.2.6-final`.
+- Exact candidate head: `0434d79e65eeca336833f102ad03c1453f2205dd`.
+- GitHub Actions run: `30828349841` — success on PHP 7.4 and PHP 8.3.
+- Provider checks: 16 static + 13 runtime, zero failures.
+- Master-plan traceability: 24/24.
+- Deterministic package: `00-sabri-membership-core-1.2.7.zip`.
+- Package SHA-256: `2383aa9dcf79ddad9da29ec7bbbd01e62d62185ae0fe900979b955d461c8cdb9`.
+- Package verification: 16 entries; zero unsafe entries, symlinks, manifest mismatches or CRC failures.
+- Truthful status: implementation and automated QA evidence exist; provider-owner acceptance, merge and staging validation do not.
+
+## 3. File 02 consumer evidence
+
+- Native repository: `majidhussainqadri1-dot/02-sabri-authentication`.
+- Candidate release: File 02 `0.3.0`.
+- Contract: `sa.cf01.authentication-assurance` `1.0.0`.
+- Draft PR: [File 02 PR #4](https://github.com/majidhussainqadri1-dot/02-sabri-authentication/pull/4).
+- Provider dependency: File 00 `1.2.7` / PR #13.
+- Exact candidate head: `089cbfc5b5be583e86c09320dcf13cf792f3eebb`.
+- GitHub Actions run: `30826988649` — success on PHP 7.4 and PHP 8.3.
+- PHP lint coverage: 24 files.
+- CF-01 assurance runtime checks: 14/14.
+- Architecture and private-File-00-metadata prohibition: passed.
+- Dynamic source-tree SHA-256: `8b238421753841edbf0b84a3bcf530b1953a5abde1b65f2513a1f7cd02fb366d`.
+- Truthful status: implementation and automated QA evidence exist; provider merge, consumer acceptance, Google sandbox and staging validation do not.
+
+## 4. Ordered dependency law
+
+1. Resolve and merge the File 00 base PR #11 after its own acceptance gates.
+2. Rebase or retarget File 00 PR #13 to `main`, rerun exact-head QA, then obtain native-owner acceptance.
+3. Revalidate File 02 PR #4 against the merged File 00 contract and obtain native-owner acceptance.
+4. Add CF-01 consumer fixtures and cross-repository integration tests against immutable merged versions.
+5. Perform Hostinger-equivalent staging, provider sandbox, privacy/security and rollback acceptance.
+6. Only then may CF01-A-009 be proposed for `Accepted`; successful isolated CI alone is insufficient.
+
+## 5. Freeze criteria for every contract
 
 A tracking issue is not complete merely because a schema or code exists. Closure requires:
 
@@ -33,17 +73,18 @@ A tracking issue is not complete merely because a schema or code exists. Closure
 9. privacy/security and relevant clinical/professional review;
 10. Founder-approved change-control reference.
 
-## 3. Cross-contract invariants
+## 6. Cross-contract invariants
 
 - Availability never grants authorization.
 - UI role/badge/cache/index/projection never overrides native truth.
+- Authentication assurance never grants clinical object, field, purpose, relationship, consent, guardian, practitioner or record-version authority.
 - Every protected action revalidates current identity, suspension, guardian, practitioner, relationship, consent, purpose, field and record version.
 - Events are past-tense facts, not commands or credentials.
 - No raw clinical narrative, attachment, identity evidence or bearer credential enters cross-module events/notifications/assurance.
 - A provider outage produces explicit `unknown`/degraded state and never permissive fallback.
 - Companion contracts do not create a second clinical system of record.
 
-## 4. Review cadence
+## 7. Review cadence
 
 On each contract change:
 
@@ -54,6 +95,6 @@ On each contract change:
 5. attach public-safe evidence and private evidence references;
 6. keep CF01-A-020 blocked until every mandatory provider contract is accepted.
 
-## 5. Current decision
+## 8. Current decision
 
-All nine provider issues are open. Therefore Files 00/02, 03/07/09, 08, 17, 19, 20/25 and 24 contracts remain **drafted but not frozen**, and C1-B runtime remains unauthorized.
+Two of nine native-owner contract candidates are implemented and automated-QA green, but both remain unmerged and unaccepted. The remaining seven contracts are still open and unimplemented. Therefore CF01-A-009, CF01-A-010 through CF01-A-015 and CF01-A-020 remain blocked, and C1-B clinical runtime remains unauthorized.
