@@ -115,6 +115,19 @@ FORBIDDEN_RUNTIME_ROOTS = {
     "wordpress",
 }
 
+# These are generated locally/inside CI and are never source evidence. They are
+# excluded from validation rather than treated as repository contents.
+IGNORED_GENERATED_PATH_PARTS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "vendor",
+}
+
 ALLOWED_TEXT_SUFFIXES = {
     "",
     ".md",
@@ -145,7 +158,8 @@ MAX_TEXT_FILE_BYTES = 2_000_000
 def iter_repository_paths(root: Path) -> Iterator[tuple[Path, Path]]:
     for path in root.rglob("*"):
         relative = path.relative_to(root)
-        if relative.parts and relative.parts[0] == ".git":
+        normalized_parts = {part.lower() for part in relative.parts}
+        if normalized_parts & IGNORED_GENERATED_PATH_PARTS:
             continue
         if path.is_symlink() or path.is_file():
             yield path, relative
