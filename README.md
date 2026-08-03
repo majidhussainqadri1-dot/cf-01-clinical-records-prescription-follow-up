@@ -55,7 +55,8 @@ The public-safe foundation currently includes:
 - `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md` — key, storage, quarantine, scanning, delivery and recovery architecture;
 - `docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md` — accountable roles, separation of duties and escalation;
 - `docs/C1-A-INDEPENDENT-REVIEW-PLAN.md` — legal, clinical, security, privacy, accessibility and resilience review plan;
-- `docs/C1-A-REQUIREMENTS-TRACEABILITY.md` — requirement, owner, evidence and blocker status;
+- `docs/C1-A-REQUIREMENTS-TRACEABILITY.md` — C1-A requirement, owner, evidence and blocker status;
+- `docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` — CF01-FR-001–032 phase mapping, test catalogue, migrations, release gates and Definition of Done;
 - `tools/validate_repository.py` and `tests/` — automated public-safety and phase-boundary gate.
 
 These documents establish reviewable baselines; they do not themselves constitute qualified approval, working controls or runtime completion.
@@ -80,7 +81,7 @@ These documents establish reviewable baselines; they do not themselves constitut
 Current truthful status:
 
 - governing plan: specified;
-- public-safe C1-A governance package: drafted and under review;
+- public-safe C1-A governance and future-phase traceability package: drafted and under review;
 - companion-owner contracts and qualified approvals: blocked/pending;
 - clinical runtime, package, staging, live deployment and operations: not started and not claimed.
 
