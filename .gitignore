@@ -1,0 +1,54 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environments and dependencies
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+node_modules/
+vendor/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build and package outputs
+build/
+dist/
+artifacts/
+*.zip
+*.tar
+*.tar.gz
+*.log
+
+# Sensitive material — never commit
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+wp-config.php
+clinical-data/
+patient-data/
+attachments/
+exports/
+backups/
+private-runbooks/
+secrets/
