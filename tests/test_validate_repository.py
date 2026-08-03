@@ -54,6 +54,16 @@ class RepositoryValidatorTests(unittest.TestCase):
             errors = validate(root)
             self.assertTrue(any("runtime file" in error for error in errors))
 
+    def test_extensionless_runtime_is_rejected_during_c1_a(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            runtime = root / "docs" / "clinical-runner"
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/usr/bin/env php\nsynthetic\n", encoding="utf-8")
+            errors = validate(root)
+            self.assertTrue(any("runtime shebang" in error for error in errors))
+
     def test_binary_office_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -61,6 +71,16 @@ class RepositoryValidatorTests(unittest.TestCase):
             (root / "evidence.docx").write_bytes(b"synthetic")
             errors = validate(root)
             self.assertTrue(any("binary/data artifact" in error for error in errors))
+
+    def test_sensitive_path_variant_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            hidden = root / "clinical_data" / "sample.txt"
+            hidden.parent.mkdir(parents=True)
+            hidden.write_text("synthetic\n", encoding="utf-8")
+            errors = validate(root)
+            self.assertTrue(any("sensitive path variant" in error for error in errors))
 
     def test_symbolic_link_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
