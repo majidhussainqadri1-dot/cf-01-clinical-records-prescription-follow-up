@@ -50,6 +50,7 @@ The public-safe foundation currently includes:
 - `SECURITY.md` — public-repository disclosure and sensitive-artifact policy;
 - `docs/C1-A-FOUNDATION.md` — architecture, trust boundaries, roles, authorization and threat model;
 - `docs/C1-A-CROSS-FILE-CONTRACTS.md` — versioned ownership and integration freeze baseline;
+- `docs/C1-A-CROSS-REPOSITORY-CONTRACT-TRACKING.md` — native-owner issue register and contract-freeze evidence;
 - `docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md` — qualified-review register and launch gates;
 - `docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md` — category-specific retention, holds and disposal framework;
 - `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md` — key, storage, quarantine, scanning, delivery and recovery architecture;
@@ -57,6 +58,7 @@ The public-safe foundation currently includes:
 - `docs/C1-A-INDEPENDENT-REVIEW-PLAN.md` — legal, clinical, security, privacy, accessibility and resilience review plan;
 - `docs/C1-A-REQUIREMENTS-TRACEABILITY.md` — C1-A requirement, owner, evidence and blocker status;
 - `docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` — CF01-FR-001–032 phase mapping, test catalogue, migrations, release gates and Definition of Done;
+- `docs/C1-A-EVIDENCE-MANIFEST.md` — validated baseline, CI evidence, document inventory and truthful blockers;
 - `tools/validate_repository.py` and `tests/` — automated public-safety and phase-boundary gate.
 
 These documents establish reviewable baselines; they do not themselves constitute qualified approval, working controls or runtime completion.
@@ -82,7 +84,8 @@ Current truthful status:
 
 - governing plan: specified;
 - public-safe C1-A governance and future-phase traceability package: drafted and under review;
-- companion-owner contracts and qualified approvals: blocked/pending;
+- native-owner contract issues: opened, but every contract remains unaccepted/unfrozen;
+- qualified approvals: blocked/pending;
 - clinical runtime, package, staging, live deployment and operations: not started and not claimed.
 
 ## Security and privacy
