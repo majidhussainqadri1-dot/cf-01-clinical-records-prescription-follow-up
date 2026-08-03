@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Iterator
 
@@ -21,6 +22,7 @@ PHASE_TRACEABILITY_PATH = "docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md"
 EXPECTED_FUNCTIONAL_REQUIREMENTS = {
     f"CF01-FR-{number:03d}" for number in range(1, 33)
 }
+EXPECTED_PHASES = {f"C1-{letter}" for letter in "BCDEFGH"}
 
 REQUIRED_FILES = {
     ".github/workflows/governance.yml",
@@ -106,9 +108,6 @@ FORBIDDEN_SENSITIVE_SUFFIXES = {
     ".keystore",
 }
 
-# C1-A uses Markdown/Mermaid and text-based evidence. Binary office documents,
-# archives and media are prohibited because they are difficult to inspect and
-# can conceal clinical data or credentials.
 FORBIDDEN_BINARY_OR_DATA_SUFFIXES = {
     ".csv",
     ".tsv",
@@ -144,7 +143,6 @@ FORBIDDEN_BINARY_OR_DATA_SUFFIXES = {
     ".dcm",
 }
 
-# No WordPress or browser clinical runtime is permitted during C1-A.
 FORBIDDEN_RUNTIME_SUFFIXES = {
     ".php",
     ".js",
@@ -176,9 +174,6 @@ FORBIDDEN_PATH_PARTS = {
     "secrets",
 }
 
-# Path separators and punctuation are removed before these tokens are checked,
-# preventing underscore/dot/space and prefix/suffix variants from bypassing the
-# policy (for example, my_clinical_data_backup).
 FORBIDDEN_NORMALIZED_PATH_TOKENS = {
     "patientdata",
     "clinicaldata",
@@ -195,8 +190,6 @@ FORBIDDEN_RUNTIME_ROOTS = {
     "wordpress",
 }
 
-# These are generated locally/inside CI and are never source evidence. They are
-# excluded from validation rather than treated as repository contents.
 IGNORED_GENERATED_PATH_PARTS = {
     ".git",
     "__pycache__",
@@ -244,7 +237,10 @@ RUNTIME_CONTENT_PATTERNS = {
     ),
 }
 
-FUNCTIONAL_REQUIREMENT_PATTERN = re.compile(r"\bCF01-FR-\d{3}\b")
+MAPPED_FUNCTIONAL_REQUIREMENT_PATTERN = re.compile(
+    r"(?m)^\|\s*(CF01-FR-\d{3})(?:\s+[^|]*)?\|"
+)
+PHASE_HEADING_PATTERN = re.compile(r"(?m)^##\s+\d+\.\s+(C1-[B-H])\b")
 MAX_TEXT_FILE_BYTES = 2_000_000
 
 
@@ -262,19 +258,29 @@ def iter_repository_paths(root: Path) -> Iterator[tuple[Path, Path]]:
             yield path, relative
 
 
-def validate_functional_requirement_coverage(content: str) -> list[str]:
-    found = set(FUNCTIONAL_REQUIREMENT_PATTERN.findall(content))
+def validate_future_phase_traceability(content: str) -> list[str]:
+    mapped_requirements = set(MAPPED_FUNCTIONAL_REQUIREMENT_PATTERN.findall(content))
+    phase_list = PHASE_HEADING_PATTERN.findall(content)
+    phase_counts = Counter(phase_list)
+    found_phases = set(phase_list)
     errors: list[str] = []
 
-    for requirement in sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS - found):
+    for requirement in sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS - mapped_requirements):
         errors.append(
-            f"future-phase traceability missing functional requirement: {requirement}"
+            f"future-phase table mapping missing functional requirement: {requirement}"
         )
 
-    for requirement in sorted(found - EXPECTED_FUNCTIONAL_REQUIREMENTS):
+    for requirement in sorted(mapped_requirements - EXPECTED_FUNCTIONAL_REQUIREMENTS):
         errors.append(
-            f"future-phase traceability contains unrecognized functional requirement: {requirement}"
+            f"future-phase table contains unrecognized functional requirement: {requirement}"
         )
+
+    for phase in sorted(EXPECTED_PHASES - found_phases):
+        errors.append(f"future-phase traceability missing phase heading: {phase}")
+
+    for phase, count in sorted(phase_counts.items()):
+        if count > 1:
+            errors.append(f"future-phase traceability duplicates phase heading: {phase}")
 
     return errors
 
@@ -324,7 +330,6 @@ def validate(root: Path) -> list[str]:
         if first_part in FORBIDDEN_RUNTIME_ROOTS:
             errors.append(f"clinical runtime path is not authorized during C1-A: {relative}")
 
-        # Python is allowed only for repository policy tooling and its tests.
         if suffix_lower == ".py" and first_part not in {"tools", "tests"}:
             errors.append(f"Python outside tools/tests requires phase approval: {relative}")
 
@@ -349,10 +354,8 @@ def validate(root: Path) -> list[str]:
                 )
 
         if relative_string == PHASE_TRACEABILITY_PATH:
-            errors.extend(validate_functional_requirement_coverage(content))
+            errors.extend(validate_future_phase_traceability(content))
 
-        # Documentation cannot conceal extensionless PHP/Node-style runtime.
-        # Tests/tools are exempt because they contain adversarial fixtures.
         if first_part not in {"tools", "tests"}:
             for label, pattern in RUNTIME_CONTENT_PATTERNS.items():
                 if pattern.search(content):
