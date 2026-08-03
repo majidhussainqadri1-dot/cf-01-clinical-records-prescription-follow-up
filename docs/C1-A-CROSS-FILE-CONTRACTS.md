@@ -89,7 +89,9 @@ Producer: File 17. Minimum fields:
 - participants and relationship class without message body;
 - consented link purpose;
 - visibility/retention class;
-- owner URL or query token subject to click-time authorization.
+- non-authorizing owner reference or destination intent resolved only after click-time authentication and authorization.
+
+A stored reference or generated link is never proof of clinical access. Bearer authorization embedded in a URL, event or notification is prohibited unless a later narrowly scoped, independently reviewed transfer/export contract expressly authorizes it.
 
 Acceptance rule: CF-01 may store only the reference and clinician-authored chart summary; message bodies remain with File 17.
 
@@ -100,11 +102,13 @@ Consumer: File 19. Payload must be privacy-minimal:
 - recipient UUID;
 - template/event key;
 - generic action category;
-- safe deep-link token/reference;
+- opaque, non-authorizing destination reference;
 - urgency and expiry;
 - correlation and deduplication keys.
 
-Prohibited payload: patient name where avoidable, diagnosis, symptom text, remedy, potency, dose, clinical note, attachment name/content, guardian detail or break-glass reason.
+File 19 or the shell may construct the final same-origin route, but every click must authenticate and reauthorize against current native state. A notification payload or URL must not function as a durable bearer credential.
+
+Prohibited payload: patient name where avoidable, diagnosis, symptom text, remedy, potency, dose, clinical note, attachment name/content, guardian detail, break-glass reason, session credential, signed attachment URL or reusable bearer token.
 
 ### 3.6 Shell and component contract
 
@@ -148,7 +152,7 @@ Events are past-tense facts, not commands or authorization. Representative futur
 - `ClinicalRetentionHoldApplied` / `ClinicalRetentionPurgeCompleted`;
 - `ClinicalBreakGlassOpened` / `ClinicalBreakGlassClosed`.
 
-Events must be idempotent, privacy-minimized, replay-safe and processed through outbox/inbox or an equivalent reliable mechanism. Raw clinical narrative and attachment content are prohibited in event payloads.
+Events must be idempotent, privacy-minimized, replay-safe and processed through outbox/inbox or an equivalent reliable mechanism. Raw clinical narrative, attachment content and bearer credentials are prohibited in event payloads.
 
 ## 6. Contract acceptance tests
 
@@ -160,7 +164,7 @@ Each owner contract must prove:
 4. duplicate/replayed mutation does not duplicate clinical truth;
 5. dependency outage produces explicit degraded state without permissive fallback;
 6. termination/revocation immediately affects the next protected action;
-7. events contain no prohibited clinical fields;
+7. events contain no prohibited clinical fields or bearer credentials;
 8. cache/index/projection cannot override native owner truth;
 9. cross-patient and cross-clinic fixtures remain isolated;
 10. rollback restores compatibility without resurrecting revoked access.
