@@ -24,8 +24,9 @@ class RepositoryValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_required_files(root)
+            marker = "-----BEGIN " + "PRIVATE KEY-----"
             (root / "bad.txt").write_text(
-                "-----BEGIN PRIVATE KEY-----\nsynthetic\n",
+                f"{marker}\nsynthetic\n",
                 encoding="utf-8",
             )
             errors = validate(root)
