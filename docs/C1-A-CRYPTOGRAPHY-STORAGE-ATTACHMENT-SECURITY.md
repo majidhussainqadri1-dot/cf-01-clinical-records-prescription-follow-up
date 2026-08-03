@@ -27,7 +27,7 @@ Encryption is not authorization. Possession of an object URL, database identifie
 | Public WordPress/application shell | route mount, generic UI and opaque references | raw clinical attachment, unrestricted chart cache, secret material |
 | Clinical application service | authorized bounded clinical commands/queries | broad admin bypass, public indexing, shared permissive credentials |
 | Clinical database | structured canonical clinical records and encrypted sensitive fields as approved | payment/card data, message bodies, public-content copies |
-| Quarantine storage | newly uploaded encrypted objects awaiting validation | end-user delivery before all gates pass |
+| Quarantine storage | encrypted newly uploaded objects awaiting validation | durable plaintext or end-user delivery before all gates pass |
 | Approved clinical object storage | scanned, validated and access-controlled attachments | public bucket/object listing or permanent unsigned URLs |
 | Key-management service | protected key operations and metadata | plaintext master keys in code, database, logs or ordinary options |
 | Audit/evidence plane | minimized actor/purpose/action/result/version evidence | clinical narrative, full identity evidence or attachment bodies |
@@ -104,7 +104,8 @@ Future attachment state machine:
 - server-generated opaque object identifier and idempotency key;
 - strict maximum size/count and bounded processing time;
 - streamed upload; no trust in filename or browser MIME;
-- immediate encryption before durable quarantine storage where architecture permits;
+- encryption before any durable quarantine write; durable plaintext staging is prohibited;
+- bounded in-memory/transient handling, with any unavoidable temporary storage encrypted, access-restricted and automatically purged on success, failure, timeout and restart;
 - checksum and byte count;
 - no direct public/application-server execution path;
 - no clinical data in object key/name, URL or provider tag.
@@ -126,6 +127,8 @@ Scanner unavailable, timeout, ambiguous result or unsupported type means `Quaran
 ### 7.3 Delivery
 
 Every read/download requires current server-side reauthorization for actor, object, field/type, purpose, relationship, consent/guardian and current record version. Delivery uses short-lived signed access or an authenticated streaming proxy under the approved architecture.
+
+If signed access is later approved, it must be issued only after current authentication/authorization, be scoped to one object and operation, omit sensitive identifiers, use a narrow TTL and support practical revocation/deny-list behavior for material risk. A stored or forwarded URL must not grant broader clinical access.
 
 Required controls:
 
