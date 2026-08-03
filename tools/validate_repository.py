@@ -5,8 +5,8 @@ The C1-A phase is governance and architecture only. This validator blocks
 common sensitive artifacts, unreviewed binary files, supply-chain indirection
 and premature clinical runtime code until a later Founder-approved
 change-control record authorizes C1-B. It also requires the public-safe C1-A
-evidence package and selected semantic markers so empty placeholder documents
-cannot satisfy the gate.
+evidence package, selected semantic markers and complete future-phase
+functional-requirement coverage.
 """
 
 from __future__ import annotations
@@ -16,6 +16,11 @@ import re
 import sys
 from pathlib import Path
 from typing import Iterator
+
+PHASE_TRACEABILITY_PATH = "docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md"
+EXPECTED_FUNCTIONAL_REQUIREMENTS = {
+    f"CF01-FR-{number:03d}" for number in range(1, 33)
+}
 
 REQUIRED_FILES = {
     ".github/workflows/governance.yml",
@@ -30,6 +35,7 @@ REQUIRED_FILES = {
     "docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md",
     "docs/C1-A-INDEPENDENT-REVIEW-PLAN.md",
     "docs/C1-A-REQUIREMENTS-TRACEABILITY.md",
+    PHASE_TRACEABILITY_PATH,
     "tests/test_validate_repository.py",
     "tools/validate_repository.py",
 }
@@ -75,6 +81,13 @@ REQUIRED_MARKERS = {
         "CF01-A-020",
         "Evidence-package inventory",
         "Release rule",
+    ),
+    PHASE_TRACEABILITY_PATH: (
+        "Phase constitution",
+        "C1-B",
+        "C1-H",
+        "Definition of Done",
+        "Current status",
     ),
 }
 
@@ -231,6 +244,7 @@ RUNTIME_CONTENT_PATTERNS = {
     ),
 }
 
+FUNCTIONAL_REQUIREMENT_PATTERN = re.compile(r"\bCF01-FR-\d{3}\b")
 MAX_TEXT_FILE_BYTES = 2_000_000
 
 
@@ -246,6 +260,23 @@ def iter_repository_paths(root: Path) -> Iterator[tuple[Path, Path]]:
             continue
         if path.is_symlink() or path.is_file():
             yield path, relative
+
+
+def validate_functional_requirement_coverage(content: str) -> list[str]:
+    found = set(FUNCTIONAL_REQUIREMENT_PATTERN.findall(content))
+    errors: list[str] = []
+
+    for requirement in sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS - found):
+        errors.append(
+            f"future-phase traceability missing functional requirement: {requirement}"
+        )
+
+    for requirement in sorted(found - EXPECTED_FUNCTIONAL_REQUIREMENTS):
+        errors.append(
+            f"future-phase traceability contains unrecognized functional requirement: {requirement}"
+        )
+
+    return errors
 
 
 def validate(root: Path) -> list[str]:
@@ -316,6 +347,9 @@ def validate(root: Path) -> list[str]:
                 errors.append(
                     f"required governance marker missing from {relative_string}: {marker}"
                 )
+
+        if relative_string == PHASE_TRACEABILITY_PATH:
+            errors.extend(validate_functional_requirement_coverage(content))
 
         # Documentation cannot conceal extensionless PHP/Node-style runtime.
         # Tests/tools are exempt because they contain adversarial fixtures.
