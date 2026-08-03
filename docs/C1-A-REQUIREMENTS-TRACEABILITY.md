@@ -24,7 +24,7 @@ A document can be `Drafted` while the phase gate remains `Blocked`. Only qualifi
 | CF01-A-016 | Define encryption, key management, secure object storage, quarantine, scanning, signed delivery and provider-exit architecture | Security Lead / Infrastructure Owner | `C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md` | provider/region decision, key recovery proof and independent review | Blocked |
 | CF01-A-017 | Define backup, restore, deletion reconciliation, RPO/RTO and ransomware recovery | Infrastructure Owner / Records Custodian | restore/deletion constitution and coverage drafted | BIA-approved RPO/RTO, provider design and restore exercise | Blocked |
 | CF01-A-018 | Name operational owners and escalation chain | Founder | role/RACI/escalation constitution drafted; Founder named | all mandatory assignees, deputies, coverage and acceptance | Blocked |
-| CF01-A-019 | Link every C1-B+ requirement to owner, test, evidence and release gate before clinical runtime coding | Product Owner / QA Lead | C1-A matrix and independent-review plan | complete C1-B–C1-H RTM/test catalogue | Proposed |
+| CF01-A-019 | Link every C1-B+ requirement to owner, test, evidence and release gate before clinical runtime coding | Product Owner / QA Lead | `C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` maps CF01-FR-001–032, migrations, tests and DoD | owner review, complete executable test IDs and Founder C1-A approval | Drafted; runtime blocked |
 | CF01-A-020 | Record Founder C1-A exit approval before entering C1-B | Founder | approval fields and evidence package requirements defined | dated approval with evidence package version and exact SHA | Blocked |
 | CF01-A-021 | Define independent legal, clinical, security, privacy, accessibility and resilience review plan | Founder / Independent Reviewers | `C1-A-INDEPENDENT-REVIEW-PLAN.md` | named assessors, scope approval, dates, completed reports and retests | Drafted |
 | CF01-A-022 | Enforce presence and semantic minimums of the public C1-A governance package in CI | QA / Security | repository validator and tests | green CI on current head and every subsequent change | In Review |
@@ -43,6 +43,7 @@ The current public-safe C1-A package consists of:
 - `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md`;
 - `docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md`;
 - `docs/C1-A-INDEPENDENT-REVIEW-PLAN.md`;
+- `docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md`;
 - this traceability matrix;
 - repository validator, tests and GitHub Actions workflow.
 
