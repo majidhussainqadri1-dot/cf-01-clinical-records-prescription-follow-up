@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Public-repository safety gate for CF-01 C1-A.
 
-This validator intentionally blocks clinical runtime code and common sensitive
-artifacts until a later change-control record authorizes C1-B.
+The C1-A phase is governance and architecture only. This validator blocks
+common sensitive artifacts, unreviewed binary files and premature clinical
+runtime code until a later Founder-approved change-control record authorizes
+C1-B.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Iterator
 
 REQUIRED_FILES = {
     "README.md",
@@ -20,7 +23,7 @@ REQUIRED_FILES = {
     "docs/C1-A-REQUIREMENTS-TRACEABILITY.md",
 }
 
-FORBIDDEN_SUFFIXES = {
+FORBIDDEN_SENSITIVE_SUFFIXES = {
     ".sql",
     ".sqlite",
     ".sqlite3",
@@ -33,6 +36,58 @@ FORBIDDEN_SUFFIXES = {
     ".pfx",
     ".jks",
     ".keystore",
+}
+
+# C1-A uses Markdown/Mermaid and text-based evidence. Binary office documents,
+# archives and media are prohibited because they are difficult to inspect and
+# can conceal clinical data or credentials.
+FORBIDDEN_BINARY_OR_DATA_SUFFIXES = {
+    ".csv",
+    ".tsv",
+    ".xls",
+    ".xlsx",
+    ".ods",
+    ".doc",
+    ".docx",
+    ".pdf",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".xz",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".mp3",
+    ".wav",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".dcm",
+}
+
+# No WordPress or browser clinical runtime is permitted during C1-A.
+FORBIDDEN_RUNTIME_SUFFIXES = {
+    ".php",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".svelte",
+    ".css",
+    ".scss",
+    ".less",
 }
 
 FORBIDDEN_NAMES = {
@@ -52,8 +107,6 @@ FORBIDDEN_PATH_PARTS = {
     "secrets",
 }
 
-# Clinical runtime is deliberately blocked during C1-A. Documentation, tests and
-# repository-governance tools are permitted.
 FORBIDDEN_RUNTIME_ROOTS = {
     "src",
     "includes",
@@ -62,16 +115,8 @@ FORBIDDEN_RUNTIME_ROOTS = {
     "wordpress",
 }
 
-SENSITIVE_PATTERNS = {
-    "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    "generic API secret": re.compile(
-        r"(?i)(?:api[_-]?key|client[_-]?secret|access[_-]?token|password)\s*[:=]\s*['\"][^'\"\s]{12,}"
-    ),
-    "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"),
-}
-
-TEXT_SUFFIXES = {
+ALLOWED_TEXT_SUFFIXES = {
+    "",
     ".md",
     ".txt",
     ".py",
@@ -85,56 +130,79 @@ TEXT_SUFFIXES = {
     ".sh",
 }
 
+SENSITIVE_PATTERNS = {
+    "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    "generic API secret": re.compile(
+        r"(?i)(?:api[_-]?key|client[_-]?secret|access[_-]?token|password)\s*[:=]\s*['\"][^'\"\s]{12,}"
+    ),
+    "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"),
+}
 
-def iter_files(root: Path):
+MAX_TEXT_FILE_BYTES = 2_000_000
+
+
+def iter_repository_paths(root: Path) -> Iterator[tuple[Path, Path]]:
     for path in root.rglob("*"):
-        if not path.is_file():
-            continue
         relative = path.relative_to(root)
         if relative.parts and relative.parts[0] == ".git":
             continue
-        yield path, relative
+        if path.is_symlink() or path.is_file():
+            yield path, relative
 
 
 def validate(root: Path) -> list[str]:
     errors: list[str] = []
-    existing = {str(relative).replace("\\", "/") for _, relative in iter_files(root)}
+    paths = list(iter_repository_paths(root))
+    existing = {str(relative).replace("\\", "/") for _, relative in paths}
 
     for required in sorted(REQUIRED_FILES - existing):
         errors.append(f"missing required governance file: {required}")
 
-    for path, relative in iter_files(root):
+    for path, relative in paths:
         normalized_parts = {part.lower() for part in relative.parts}
         name_lower = path.name.lower()
         suffix_lower = path.suffix.lower()
+        first_part = relative.parts[0].lower() if relative.parts else ""
+
+        if path.is_symlink():
+            errors.append(f"symbolic links require explicit review and are blocked: {relative}")
+            continue
 
         if name_lower in FORBIDDEN_NAMES:
             errors.append(f"forbidden sensitive file: {relative}")
 
-        if suffix_lower in FORBIDDEN_SUFFIXES:
+        if suffix_lower in FORBIDDEN_SENSITIVE_SUFFIXES:
             errors.append(f"forbidden sensitive artifact: {relative}")
+
+        if suffix_lower in FORBIDDEN_BINARY_OR_DATA_SUFFIXES:
+            errors.append(f"binary/data artifact is prohibited during C1-A: {relative}")
+
+        if suffix_lower in FORBIDDEN_RUNTIME_SUFFIXES:
+            errors.append(f"clinical runtime file is not authorized during C1-A: {relative}")
 
         if normalized_parts & FORBIDDEN_PATH_PARTS:
             errors.append(f"forbidden sensitive path: {relative}")
 
-        if relative.parts and relative.parts[0].lower() in FORBIDDEN_RUNTIME_ROOTS:
-            errors.append(
-                f"clinical runtime path is not authorized during C1-A: {relative}"
-            )
+        if first_part in FORBIDDEN_RUNTIME_ROOTS:
+            errors.append(f"clinical runtime path is not authorized during C1-A: {relative}")
 
-        # Root-level PHP files would form an installable WordPress runtime.
-        if len(relative.parts) == 1 and suffix_lower == ".php":
-            errors.append(
-                f"root PHP runtime is not authorized during C1-A: {relative}"
-            )
+        # Python is allowed only for repository policy tooling and its tests.
+        if suffix_lower == ".py" and first_part not in {"tools", "tests"}:
+            errors.append(f"Python outside tools/tests requires phase approval: {relative}")
 
-        if suffix_lower not in TEXT_SUFFIXES or path.stat().st_size > 2_000_000:
+        if suffix_lower not in ALLOWED_TEXT_SUFFIXES:
+            errors.append(f"unreviewed file type is blocked during C1-A: {relative}")
+            continue
+
+        if path.stat().st_size > MAX_TEXT_FILE_BYTES:
+            errors.append(f"text file exceeds C1-A review limit: {relative}")
             continue
 
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            errors.append(f"non-UTF-8 text-like file requires review: {relative}")
+            errors.append(f"non-UTF-8 file requires explicit review: {relative}")
             continue
 
         for label, pattern in SENSITIVE_PATTERNS.items():
