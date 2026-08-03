@@ -161,6 +161,16 @@ FORBIDDEN_PATH_PARTS = {
     "secrets",
 }
 
+# Path separators and punctuation are removed before these tokens are checked,
+# preventing underscore/dot/space variants from bypassing the policy.
+FORBIDDEN_NORMALIZED_PATH_TOKENS = {
+    "patientdata",
+    "clinicaldata",
+    "realpatientdata",
+    "productionpatientdata",
+    "privateclinicaldata",
+}
+
 FORBIDDEN_RUNTIME_ROOTS = {
     "src",
     "includes",
@@ -206,7 +216,19 @@ SENSITIVE_PATTERNS = {
     "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"),
 }
 
+RUNTIME_CONTENT_PATTERNS = {
+    "PHP opening tag": re.compile(r"<\?php\b", re.IGNORECASE),
+    "runtime shebang": re.compile(
+        r"\A#![^\n]*(?:\bphp\b|\bnode\b|\bdeno\b|\bbun\b)",
+        re.IGNORECASE,
+    ),
+}
+
 MAX_TEXT_FILE_BYTES = 2_000_000
+
+
+def normalize_path_token(part: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", part.lower())
 
 
 def iter_repository_paths(root: Path) -> Iterator[tuple[Path, Path]]:
@@ -230,6 +252,7 @@ def validate(root: Path) -> list[str]:
     for path, relative in paths:
         relative_string = str(relative).replace("\\", "/")
         normalized_parts = {part.lower() for part in relative.parts}
+        compact_parts = {normalize_path_token(part) for part in relative.parts}
         name_lower = path.name.lower()
         suffix_lower = path.suffix.lower()
         first_part = relative.parts[0].lower() if relative.parts else ""
@@ -252,6 +275,9 @@ def validate(root: Path) -> list[str]:
 
         if normalized_parts & FORBIDDEN_PATH_PARTS:
             errors.append(f"forbidden sensitive path: {relative}")
+
+        if compact_parts & FORBIDDEN_NORMALIZED_PATH_TOKENS:
+            errors.append(f"forbidden sensitive path variant: {relative}")
 
         if first_part in FORBIDDEN_RUNTIME_ROOTS:
             errors.append(f"clinical runtime path is not authorized during C1-A: {relative}")
@@ -279,6 +305,13 @@ def validate(root: Path) -> list[str]:
                 errors.append(
                     f"required governance marker missing from {relative_string}: {marker}"
                 )
+
+        # Documentation cannot conceal extensionless PHP/Node-style runtime.
+        # Tests/tools are exempt because they contain adversarial fixtures.
+        if first_part not in {"tools", "tests"}:
+            for label, pattern in RUNTIME_CONTENT_PATTERNS.items():
+                if pattern.search(content):
+                    errors.append(f"possible {label} runtime detected in {relative}")
 
         for label, pattern in SENSITIVE_PATTERNS.items():
             if pattern.search(content):
