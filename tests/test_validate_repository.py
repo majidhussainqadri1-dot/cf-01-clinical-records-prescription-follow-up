@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tools.validate_repository import (
     EXPECTED_FUNCTIONAL_REQUIREMENTS,
+    EXPECTED_PHASES,
     PHASE_TRACEABILITY_PATH,
     REQUIRED_FILES,
     REQUIRED_MARKERS,
@@ -23,7 +24,10 @@ class RepositoryValidatorTests(unittest.TestCase):
             if markers:
                 content += "\n".join(markers) + "\n"
             if relative == PHASE_TRACEABILITY_PATH:
-                content += "\n".join(sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS)) + "\n"
+                for index, phase in enumerate(sorted(EXPECTED_PHASES), start=1):
+                    content += f"## {index}. {phase}\n"
+                for requirement in sorted(EXPECTED_FUNCTIONAL_REQUIREMENTS):
+                    content += f"| {requirement} | synthetic mapping |\n"
             path.write_text(content, encoding="utf-8")
 
     def test_clean_governance_repository_passes(self) -> None:
@@ -144,17 +148,36 @@ class RepositoryValidatorTests(unittest.TestCase):
                 errors,
             )
 
-    def test_missing_functional_requirement_mapping_is_rejected(self) -> None:
+    def test_missing_functional_requirement_table_mapping_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_required_files(root)
             traceability = root / PHASE_TRACEABILITY_PATH
             missing = "CF01-FR-032"
-            content = traceability.read_text(encoding="utf-8").replace(missing, "")
+            content = traceability.read_text(encoding="utf-8").replace(
+                f"| {missing} | synthetic mapping |\n",
+                "",
+            )
             traceability.write_text(content, encoding="utf-8")
             errors = validate(root)
             self.assertIn(
-                f"future-phase traceability missing functional requirement: {missing}",
+                f"future-phase table mapping missing functional requirement: {missing}",
+                errors,
+            )
+
+    def test_missing_phase_heading_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            traceability = root / PHASE_TRACEABILITY_PATH
+            missing_phase = "C1-G"
+            content = traceability.read_text(encoding="utf-8")
+            phase_index = sorted(EXPECTED_PHASES).index(missing_phase) + 1
+            content = content.replace(f"## {phase_index}. {missing_phase}\n", "")
+            traceability.write_text(content, encoding="utf-8")
+            errors = validate(root)
+            self.assertIn(
+                f"future-phase traceability missing phase heading: {missing_phase}",
                 errors,
             )
 
