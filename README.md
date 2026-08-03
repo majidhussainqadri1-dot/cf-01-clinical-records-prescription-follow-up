@@ -39,7 +39,26 @@ Runtime clinical coding and any handling of real patient data remain blocked unt
 4. File 00/02 identity assertions and File 08 care-context contracts frozen;
 5. File 20/25 private-shell and accessible-component contracts available;
 6. File 24 assurance manifest and independent security acceptance defined;
-7. Founder Change-Control approval recorded with version, date and evidence.
+7. named operational owners, deputies, coverage and escalation paths;
+8. Founder Change-Control approval recorded with version, date and evidence.
+
+## C1-A governance package
+
+The public-safe foundation currently includes:
+
+- `CHANGE_CONTROL.md` — phase authorization, scope and prohibitions;
+- `SECURITY.md` — public-repository disclosure and sensitive-artifact policy;
+- `docs/C1-A-FOUNDATION.md` — architecture, trust boundaries, roles, authorization and threat model;
+- `docs/C1-A-CROSS-FILE-CONTRACTS.md` — versioned ownership and integration freeze baseline;
+- `docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md` — qualified-review register and launch gates;
+- `docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md` — category-specific retention, holds and disposal framework;
+- `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md` — key, storage, quarantine, scanning, delivery and recovery architecture;
+- `docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md` — accountable roles, separation of duties and escalation;
+- `docs/C1-A-INDEPENDENT-REVIEW-PLAN.md` — legal, clinical, security, privacy, accessibility and resilience review plan;
+- `docs/C1-A-REQUIREMENTS-TRACEABILITY.md` — requirement, owner, evidence and blocker status;
+- `tools/validate_repository.py` and `tests/` — automated public-safety and phase-boundary gate.
+
+These documents establish reviewable baselines; they do not themselves constitute qualified approval, working controls or runtime completion.
 
 ## Delivery phases
 
@@ -58,11 +77,16 @@ Runtime clinical coding and any handling of real patient data remain blocked unt
 
 `Specified`, `Coded`, `Packaged`, `Automated-QA Green`, `Staging-Accepted`, `Live-Deployed` and `Operational` are separate statuses and must never be treated as synonyms.
 
+Current truthful status:
+
+- governing plan: specified;
+- public-safe C1-A governance package: drafted and under review;
+- companion-owner contracts and qualified approvals: blocked/pending;
+- clinical runtime, package, staging, live deployment and operations: not started and not claimed.
+
 ## Security and privacy
 
 This is a public repository. Never commit patient data, clinical attachments, identity evidence, credentials, private runbooks, encryption keys, provider secrets, database dumps, production logs or unrestricted clinical content.
-
-See the controlled C1-A branch and draft pull request for the first implementation foundation.
 
 ## Governance
 
