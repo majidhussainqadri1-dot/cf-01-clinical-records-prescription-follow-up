@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.validate_repository import REQUIRED_FILES, validate
+from tools.validate_repository import REQUIRED_FILES, REQUIRED_MARKERS, validate
 
 
 class RepositoryValidatorTests(unittest.TestCase):
@@ -12,7 +12,11 @@ class RepositoryValidatorTests(unittest.TestCase):
         for relative in REQUIRED_FILES:
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("synthetic governance content\n", encoding="utf-8")
+            markers = REQUIRED_MARKERS.get(relative, ())
+            content = "synthetic governance content\n"
+            if markers:
+                content += "\n".join(markers) + "\n"
+            path.write_text(content, encoding="utf-8")
 
     def test_clean_governance_repository_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -76,6 +80,18 @@ class RepositoryValidatorTests(unittest.TestCase):
             (root / "SECURITY.md").unlink()
             errors = validate(root)
             self.assertIn("missing required governance file: SECURITY.md", errors)
+
+    def test_missing_required_marker_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_required_files(root)
+            readme = root / "README.md"
+            readme.write_text("Current status:\nActivation law\n", encoding="utf-8")
+            errors = validate(root)
+            self.assertIn(
+                "required governance marker missing from README.md: C1-A governance package",
+                errors,
+            )
 
 
 if __name__ == "__main__":
