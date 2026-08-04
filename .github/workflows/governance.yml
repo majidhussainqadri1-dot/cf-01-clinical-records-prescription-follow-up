@@ -28,7 +28,28 @@ jobs:
         run: |
           set -euxo pipefail
           test -d .github/runtime-source-v2
-          test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 10
+          test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 12
+
+          declare -A expected_sizes=(
+            [part-000a]=4500 [part-000b]=4500 [part-001]=9000
+            [part-002a]=4500 [part-002b]=4500 [part-003]=9000
+            [part-004]=9000 [part-005]=9000 [part-006]=9000
+            [part-007]=9000 [part-008]=9000 [part-009]=192
+          )
+          declare -A expected_hashes=(
+            [part-000a]='3a42109422800971aed9e807bdd65ccd908bdf6fac8ebfca819b6b77bac0d992'
+            [part-000b]='bf15a01dc1035359553dded25e52963fe32b8648eb87caf62a6c5982422600ee'
+            [part-001]='dae899b7b9ab857c7370113ecf21bc391090581af02022d86cd2a292839b5c12'
+            [part-002a]='c489e6d2c298d84398253410c8b8765b2eb564ec57ed2742bad4d7855ccd3ecb'
+            [part-002b]='6a44a37c7516b62802ace9f13cb56fd72cd5a864964fde4422004f91a10e1a8f'
+            [part-003]='1b4dcebd39b64e2955d4dcc4048482896d4cee3b70e2ed784bf6ebd2b9a89e2e'
+            [part-004]='fab42b50591fd658fff052ae3428c11958ad7862089ac59c9c9b57bfb9d702e9'
+            [part-005]='26fa6364ad4730356fc06c13a88011d832f9cae0af503ad87c9a5e501a01ee60'
+            [part-006]='31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
+            [part-007]='7f6977c9aec1c452597c659ca436b8816bbc53ddcb8ec29a77f51d037f1606bd'
+            [part-008]='d9c5d1af1cba0f850b04e455cee8fc6fae124265ca0836f223577e70bbc83358'
+            [part-009]='3650989a4f4e4cb09bab92e6f92b430d556c39666ca4f53812b7ab2482796ca6'
+          )
 
           : > /tmp/cf01-runtime-source.b64
           while IFS= read -r part; do
@@ -37,21 +58,18 @@ jobs:
             tr -cd 'A-Za-z0-9+/=' < "$part" > "$normalized"
             size="$(wc -c < "$normalized")"
             hash="$(sha256sum "$normalized" | cut -d' ' -f1)"
-            echo "${name}: transported_size=${size} transported_sha256=${hash}"
-            if [ "$name" = 'part-009' ]; then
-              test "$size" -ge 192
-              head -c 192 "$normalized" >> /tmp/cf01-runtime-source.b64
-            else
-              test "$size" -ge 9000
-              head -c 9000 "$normalized" >> /tmp/cf01-runtime-source.b64
-            fi
+            echo "${name}: size=${size} sha256=${hash}"
+            test "$size" -eq "${expected_sizes[$name]}"
+            test "$hash" = "${expected_hashes[$name]}"
+            cat "$normalized" >> /tmp/cf01-runtime-source.b64
             rm -f "$normalized"
           done < <(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort)
 
           test "$(wc -c < /tmp/cf01-runtime-source.b64)" -eq 81192
           base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
           payload_hash="$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)"
-          echo "Reconstructed payload SHA-256: ${payload_hash}"
+          echo "Payload SHA-256: ${payload_hash}"
+          test "${payload_hash}" = "973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5"
           gzip -t /tmp/cf01-runtime-source.tar.gz
           tar -tzf /tmp/cf01-runtime-source.tar.gz > /tmp/cf01-runtime-inventory.txt
           awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-runtime-inventory.txt
