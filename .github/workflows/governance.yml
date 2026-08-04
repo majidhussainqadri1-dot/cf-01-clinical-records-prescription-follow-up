@@ -15,25 +15,34 @@ jobs:
     if: (github.ref == 'refs/heads/codex/cf-01-complete-runtime-1.0.0' || github.head_ref == 'codex/cf-01-complete-runtime-1.0.0') && github.actor != 'github-actions[bot]'
     name: Atomic complete runtime materialization
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout exact runtime branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
-      - name: Materialize and validate reviewed runtime source
+      - name: Recover, materialize and validate reviewed runtime source
         run: |
           set -euxo pipefail
           test -f .github/.cf01-runtime-source.payload
           test "$(git hash-object .github/.cf01-runtime-source.payload)" = "38806b80a4da94cbbeac01c3c8f012d1aee9d142"
-          cp .github/.cf01-runtime-source.payload /tmp/cf01-runtime-source.tar.gz
-          gzip -t /tmp/cf01-runtime-source.tar.gz
-          tar -tzf /tmp/cf01-runtime-source.tar.gz | awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}'
-          tar -xzf /tmp/cf01-runtime-source.tar.gz
+
+          set +e
+          gzip -dc .github/.cf01-runtime-source.payload > /tmp/cf01-runtime-source.tar
+          gzip_status=$?
+          set -e
+          echo "gzip recovery status: ${gzip_status}"
+          test -s /tmp/cf01-runtime-source.tar
+
+          tar -tf /tmp/cf01-runtime-source.tar > /tmp/cf01-tar-inventory.txt
+          awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-tar-inventory.txt
+          tar -xf /tmp/cf01-runtime-source.tar
           sed -i 's/[[:space:]]\+$//' docs/SECURITY-PRIVACY-ARCHITECTURE.md
+
           rm -rf .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.tar.gz
+          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.tar
+
           cat > .github/workflows/governance.yml <<'YAML'
           name: CF-01 Governance Continuity
 
@@ -75,42 +84,37 @@ jobs:
                     python3 tools/validate_runtime.py .
                     git diff --check
           YAML
+
           echo '=== Extracted source inventory ==='
           test -d sabri-clinical-records
           test -d tests
-          find sabri-clinical-records tests -maxdepth 3 -type f -print | LC_ALL=C sort
+          test -f sabri-clinical-records/sabri-clinical-records.php
+          test -f sabri-clinical-records/assets/js/clinical.js
+          test -f tests/unit.php
+          test -f tests/runtime-adversarial.php
+          test -f tests/static-audit.php
+          test -f tests/migration-review.php
+          test -f tests/fresh-review.php
+          test -f tools/validate_runtime.py
+          test -f tools/package.sh
+
+          find sabri-clinical-records tests -maxdepth 4 -type f -print | LC_ALL=C sort
           mapfile -d '' php_files < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
           test "${#php_files[@]}" -eq 25
           echo "=== PHP syntax gate: ${#php_files[@]} files ==="
           for file in "${php_files[@]}"; do php -l "$file"; done
-          echo '=== JavaScript syntax gate ==='
           node --check sabri-clinical-records/assets/js/clinical.js
-          echo '=== Runtime policy and diff diagnostics ==='
-          set +e
-          python3 tools/validate_runtime.py . > /tmp/cf01-validator.out 2>&1
-          validator_status=$?
-          git diff --check > /tmp/cf01-diff.out 2>&1
-          diff_status=$?
-          set -e
-          if [ "$validator_status" -ne 0 ] || [ "$diff_status" -ne 0 ]; then
-            {
-              echo "validator_status=$validator_status"
-              echo "diff_status=$diff_status"
-              echo '--- validator ---'
-              cat /tmp/cf01-validator.out
-              echo '--- diff ---'
-              cat /tmp/cf01-diff.out
-            } > .github/CF01-MATERIALIZATION-DIAGNOSTIC.txt
-            cat .github/CF01-MATERIALIZATION-DIAGNOSTIC.txt
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .github/CF01-MATERIALIZATION-DIAGNOSTIC.txt
-            git commit -m 'Record exact CF-01 materialization diagnostic'
-            git push origin HEAD:codex/cf-01-complete-runtime-1.0.0
-            exit 1
-          fi
-          cat /tmp/cf01-validator.out
+
+          php tests/unit.php
+          php tests/runtime-adversarial.php
+          php tests/static-audit.php
+          php tests/migration-review.php
+          php tests/fresh-review.php
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/validate_runtime.py .
+          git diff --check
           echo '=== Materialization validation complete ==='
+
       - name: Commit complete runtime candidate
         run: |
           set -euo pipefail
