@@ -1,103 +1,50 @@
-name: CF-01 Governance Gate
+name: CF-01 Verified Runtime Materialization
 
 on:
   push:
     branches:
-      - main
-      - "codex/**"
-  pull_request:
+      - codex/cf-01-complete-runtime-1.0.0
 
 permissions:
   contents: write
 
 jobs:
   materialize-complete-runtime:
-    if: (github.ref == 'refs/heads/codex/cf-01-complete-runtime-1.0.0' || github.head_ref == 'codex/cf-01-complete-runtime-1.0.0') && github.actor != 'github-actions[bot]'
-    name: Atomic complete runtime materialization
+    if: github.actor != 'github-actions[bot]'
+    name: Materialize and validate complete CF-01 runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - name: Checkout exact runtime branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
-      - name: Export immutable payload for forensic recovery
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cf01-immutable-runtime-payload-${{ github.sha }}
-          path: .github/.cf01-runtime-source.payload
-          if-no-files-found: error
-          retention-days: 3
-          compression-level: 0
-          overwrite: false
-          include-hidden-files: true
-      - name: Recover, materialize and validate reviewed runtime source
+
+      - name: Verify and extract reviewed source payload
         run: |
-          set -euxo pipefail
-          test -f .github/.cf01-runtime-source.payload
-          test "$(git hash-object .github/.cf01-runtime-source.payload)" = "38806b80a4da94cbbeac01c3c8f012d1aee9d142"
+          set -euo pipefail
+          test -d .github/runtime-source-v2
+          test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 10
+          cat .github/runtime-source-v2/part-* > /tmp/cf01-runtime-source.b64
+          test "$(wc -c < /tmp/cf01-runtime-source.b64)" -eq 81192
+          base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
+          test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5"
+          gzip -t /tmp/cf01-runtime-source.tar.gz
+          tar -tzf /tmp/cf01-runtime-source.tar.gz > /tmp/cf01-runtime-inventory.txt
+          awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-runtime-inventory.txt
+          tar -xzf /tmp/cf01-runtime-source.tar.gz
 
-          set +e
-          gzip -dc .github/.cf01-runtime-source.payload > /tmp/cf01-runtime-source.tar
-          gzip_status=$?
-          set -e
-          echo "gzip recovery status: ${gzip_status}"
-          test -s /tmp/cf01-runtime-source.tar
+          rm -rf .github/runtime-source-v2 .github/runtime-payload
+          rm -f .github/.cf01-runtime-source.payload
+          rm -f .github/workflows/materialize-runtime.yml .materialize-trigger
+          rm -f /tmp/cf01-runtime-source.b64 /tmp/cf01-runtime-source.tar.gz /tmp/cf01-runtime-inventory.txt
 
-          tar -tf /tmp/cf01-runtime-source.tar > /tmp/cf01-tar-inventory.txt
-          awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-tar-inventory.txt
-          tar -xf /tmp/cf01-runtime-source.tar
-          sed -i 's/[[:space:]]\+$//' docs/SECURITY-PRIVACY-ARCHITECTURE.md
-
-          rm -rf .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.tar
-
-          cat > .github/workflows/governance.yml <<'YAML'
-          name: CF-01 Governance Continuity
-
-          on:
-            push:
-              branches:
-                - main
-                - "codex/**"
-            pull_request:
-
-          permissions:
-            contents: read
-
-          jobs:
-            governance-continuity:
-              name: Governance, public-safety and phase continuity
-              runs-on: ubuntu-24.04
-              timeout-minutes: 12
-              env:
-                PYTHONDONTWRITEBYTECODE: "1"
-              steps:
-                - name: Checkout exact event head
-                  uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-                  with:
-                    persist-credentials: false
-                - name: Verify inherited C1-A governance evidence
-                  run: |
-                    set -euo pipefail
-                    test -f CHANGE_CONTROL.md
-                    test -f SECURITY.md
-                    test -f docs/C1-A-FOUNDATION.md
-                    test -f docs/C1-A-CROSS-FILE-CONTRACTS.md
-                    test -f docs/C1-A-REQUIREMENTS-TRACEABILITY.md
-                    test -f docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md
-                    python3 -m unittest discover -s tests -p 'test_*.py' -v
-                - name: Validate approved public runtime policy
-                  run: |
-                    set -euo pipefail
-                    python3 tools/validate_runtime.py .
-                    git diff --check
-          YAML
-
-          echo '=== Extracted source inventory ==='
-          test -d sabri-clinical-records
-          test -d tests
+      - name: Verify complete source inventory
+        run: |
+          set -euo pipefail
           test -f sabri-clinical-records/sabri-clinical-records.php
           test -f sabri-clinical-records/assets/js/clinical.js
           test -f tests/unit.php
@@ -107,14 +54,18 @@ jobs:
           test -f tests/fresh-review.php
           test -f tools/validate_runtime.py
           test -f tools/package.sh
+          test -f .github/workflows/governance.yml
+          test -f .github/workflows/final-evidence.yml
+          mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
+          test "${#php_files[@]}" -eq 26
+          printf '%s\n' "${php_files[@]}" | LC_ALL=C sort
 
-          find sabri-clinical-records tests -maxdepth 4 -type f -print | LC_ALL=C sort
-          mapfile -d '' php_files < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
-          test "${#php_files[@]}" -eq 25
-          echo "=== PHP syntax gate: ${#php_files[@]} files ==="
-          for file in "${php_files[@]}"; do php -l "$file"; done
+      - name: Run complete review and correction evidence
+        run: |
+          set -euo pipefail
+          mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
+          for file in "${php_files[@]}"; do php -l "$file" >/dev/null; done
           node --check sabri-clinical-records/assets/js/clinical.js
-
           php tests/unit.php
           php tests/runtime-adversarial.php
           php tests/static-audit.php
@@ -123,9 +74,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/validate_runtime.py .
           git diff --check
-          echo '=== Materialization validation complete ==='
 
-      - name: Commit complete runtime candidate
+      - name: Commit reviewable runtime source
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
@@ -133,18 +83,3 @@ jobs:
           git add -A
           git commit -m 'Implement complete CF-01 clinical runtime candidate 1.0.0'
           git push origin HEAD:codex/cf-01-complete-runtime-1.0.0
-
-  c1-a-public-safety:
-    if: github.ref != 'refs/heads/codex/cf-01-complete-runtime-1.0.0' && github.head_ref != 'codex/cf-01-complete-runtime-1.0.0'
-    name: C1-A public-safety and policy tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Run unit tests
-        run: python3 -m unittest discover -s tests -v
-      - name: Validate public repository policy
-        run: python3 tools/validate_repository.py .
