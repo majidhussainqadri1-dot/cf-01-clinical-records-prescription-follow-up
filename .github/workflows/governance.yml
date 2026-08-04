@@ -25,15 +25,15 @@ jobs:
       - name: Materialize and validate reviewed runtime source
         run: |
           set -euxo pipefail
-          test "$(find .github/runtime-payload -maxdepth 1 -name 'part-*' -type f | wc -l)" -eq 18
-          cat .github/runtime-payload/part-* > /tmp/cf01-runtime-source.b64
-          base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
-          test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "d64558cae1a3539c36be096654527365a8945044a9a6ab67bc2f5d6a76b876d5"
+          test -f .github/.cf01-runtime-source.payload
+          test "$(git hash-object .github/.cf01-runtime-source.payload)" = "38806b80a4da94cbbeac01c3c8f012d1aee9d142"
+          cp .github/.cf01-runtime-source.payload /tmp/cf01-runtime-source.tar.gz
+          gzip -t /tmp/cf01-runtime-source.tar.gz
           tar -tzf /tmp/cf01-runtime-source.tar.gz | awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}'
           tar -xzf /tmp/cf01-runtime-source.tar.gz
           sed -i 's/[[:space:]]\+$//' docs/SECURITY-PRIVACY-ARCHITECTURE.md
           rm -rf .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.b64 /tmp/cf01-runtime-source.tar.gz
+          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.tar.gz
           cat > .github/workflows/governance.yml <<'YAML'
           name: CF-01 Governance Continuity
 
