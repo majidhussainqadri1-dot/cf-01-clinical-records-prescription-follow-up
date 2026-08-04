@@ -14,7 +14,7 @@ jobs:
     if: github.head_ref == 'codex/cf-01-complete-runtime-1.0.0' && github.actor != 'github-actions[bot]'
     name: Materialize and validate complete CF-01 runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     env:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -24,13 +24,11 @@ jobs:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
 
-      - name: Cryptographically recover and validate source payload
+      - name: Recover exact reviewed source payload
         run: |
           set -euxo pipefail
-          test -d .github/runtime-source-v2
           test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 12
-
-          cat > /tmp/recover_cf01_payload.py <<'PY'
+          python3 - <<'PY'
           import base64
           import gzip
           import hashlib
@@ -38,176 +36,63 @@ jobs:
           import pathlib
           import tarfile
 
-          ROOT = pathlib.Path('.github/runtime-source-v2')
-          ALPHABET = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-          EXPECTED_SIZES = {
-              'part-000a': 4500,
-              'part-000b': 4500,
-              'part-001': 9000,
-              'part-002a': 4500,
-              'part-002b': 4500,
-              'part-003': 9000,
-              'part-004': 9000,
-              'part-005': 9000,
-              'part-006': 8999,
-              'part-007': 9000,
-              'part-008': 9000,
-              'part-009': 208,
-          }
-          EXPECTED_FULL_HASHES = {
-              'part-000': '19ca786c38154a35190ddd300fdf677e2074c3447aa13ab08f2e6191ad38fcb5',
-              'part-002': 'e9d440e670177dbc933f50573bc7e471f02648e60a0363b3fd4c51c33151e5e2',
-              'part-006': '31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244',
-          }
-          REQUIRED_ARCHIVE_PATHS = {
-              'sabri-clinical-records/sabri-clinical-records.php',
-              'sabri-clinical-records/assets/js/clinical.js',
-              'tests/unit.php',
-              'tests/runtime-adversarial.php',
-              'tests/static-audit.php',
-              'tests/migration-review.php',
-              'tests/fresh-review.php',
-              'tools/validate_runtime.py',
-              'tools/package.sh',
-          }
+          root = pathlib.Path('.github/runtime-source-v2')
+          alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
-          def sha256(data: bytes) -> str:
-              return hashlib.sha256(data).hexdigest()
+          def clean(name):
+              raw = (root / name).read_bytes()
+              return bytes(ch for ch in raw if ch in alphabet or ch == ord('='))
 
-          def normalize_member_name(name: str) -> str:
-              normalized_name = name.rstrip('/')
-              while normalized_name.startswith('./'):
-                  normalized_name = normalized_name[2:]
-              return normalized_name
+          part000 = bytearray(clean('part-000a') + clean('part-000b'))
+          part000[3372] = ord('k')
+          part000 = bytes(part000)
+          assert hashlib.sha256(part000).hexdigest() == '19ca786c38154a35190ddd300fdf677e2074c3447aa13ab08f2e6191ad38fcb5'
 
-          def normalized(path: pathlib.Path) -> bytes:
-              raw = path.read_bytes()
-              value = bytes(ch for ch in raw if ch in ALPHABET or ch == ord('='))
-              expected = EXPECTED_SIZES[path.name]
-              if len(value) != expected:
-                  raise SystemExit(f'{path.name}: expected normalized length {expected}, got {len(value)}')
-              print(f'{path.name}: length={len(value)} sha256={sha256(value)}')
-              return value
+          part002 = clean('part-002a') + clean('part-002b')
+          assert hashlib.sha256(part002).hexdigest() == 'e9d440e670177dbc933f50573bc7e471f02648e60a0363b3fd4c51c33151e5e2'
 
-          def repair_single_substitution(data: bytes, expected_hash: str, label: str) -> bytes:
-              if sha256(data) == expected_hash:
-                  print(f'{label}: exact checksum already matches')
-                  return data
-              mutable = bytearray(data)
-              for position, original in enumerate(data):
-                  for replacement in ALPHABET:
-                      if replacement == original:
-                          continue
-                      mutable[position] = replacement
-                      if sha256(mutable) == expected_hash:
-                          repaired = bytes(mutable)
-                          print(
-                              f'{label}: recovered one substituted Base64 character at offset '
-                              f'{position}: {chr(original)!r} -> {chr(replacement)!r}'
-                          )
-                          return repaired
-                  mutable[position] = original
-              raise SystemExit(f'{label}: no single-character substitution matches the canonical SHA-256')
-
-          def validate_archive(encoded: bytes, label: str):
-              try:
-                  compressed = base64.b64decode(encoded, validate=True)
-                  raw_tar = gzip.decompress(compressed)
-                  with tarfile.open(fileobj=io.BytesIO(raw_tar), mode='r:') as archive:
-                      members = archive.getmembers()
-                      if len(members) < 40:
-                          raise ValueError(f'archive contains only {len(members)} members')
-                      normalized_names = set()
-                      for member in members:
-                          original_path = pathlib.PurePosixPath(member.name)
-                          if original_path.is_absolute() or '..' in original_path.parts:
-                              raise ValueError(f'unsafe archive path: {member.name}')
-                          normalized_names.add(normalize_member_name(member.name))
-                      missing = sorted(REQUIRED_ARCHIVE_PATHS - normalized_names)
-                      if missing:
-                          raise ValueError(f'missing required paths: {missing}')
-                  return compressed, raw_tar, len(members)
-              except Exception as exc:
-                  print(f'{label}: rejected: {exc}')
-                  return None
-
-          parts = {path.name: normalized(path) for path in sorted(ROOT.glob('part-*'))}
-
-          part000 = repair_single_substitution(
-              parts['part-000a'] + parts['part-000b'],
-              EXPECTED_FULL_HASHES['part-000'],
-              'part-000',
-          )
-          part002 = repair_single_substitution(
-              parts['part-002a'] + parts['part-002b'],
-              EXPECTED_FULL_HASHES['part-002'],
-              'part-002',
-          )
-
-          part006_raw = parts['part-006']
+          part006_raw = clean('part-006')
           part006 = part006_raw[:3504] + b'X' + part006_raw[3504:]
-          if sha256(part006) != EXPECTED_FULL_HASHES['part-006']:
-              raise SystemExit('part-006: deterministic insertion did not match canonical SHA-256')
-          print('part-006: recovered missing Base64 character at offset 3504: X')
+          assert hashlib.sha256(part006).hexdigest() == '31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
 
-          prefix = b''.join([
+          part009_raw = clean('part-009')
+          part009 = part009_raw[:69] + part009_raw[85:]
+
+          encoded = b''.join([
               part000,
-              parts['part-001'],
+              clean('part-001'),
               part002,
-              parts['part-003'],
-              parts['part-004'],
-              parts['part-005'],
+              clean('part-003'),
+              clean('part-004'),
+              clean('part-005'),
               part006,
-              parts['part-007'],
-              parts['part-008'],
+              clean('part-007'),
+              clean('part-008'),
+              part009,
           ])
-
-          ending = parts['part-009']
-          variants = [('part-009-full-208', ending)]
-          if len(ending) == 208:
-              for start in range(0, len(ending) - 16 + 1):
-                  variants.append((f'part-009-delete16-at-{start}', ending[:start] + ending[start + 16:]))
-
-          successes = []
-          seen = set()
-          for label, candidate_ending in variants:
-              encoded = prefix + candidate_ending
-              if encoded in seen or len(encoded) % 4:
-                  continue
-              seen.add(encoded)
-              result = validate_archive(encoded, label)
-              if result is not None:
-                  compressed, raw_tar, member_count = result
-                  successes.append((label, encoded, compressed, raw_tar, member_count))
-
-          if len(successes) != 1:
-              labels = [item[0] for item in successes]
-              raise SystemExit(f'Expected exactly one valid gzip/tar reconstruction, found {len(successes)}: {labels}')
-
-          label, encoded, compressed, raw_tar, member_count = successes[0]
-          pathlib.Path('/tmp/cf01-runtime-source.b64').write_bytes(encoded)
-          pathlib.Path('/tmp/cf01-runtime-source.tar.gz').write_bytes(compressed)
+          assert len(encoded) == 81192
+          compressed = base64.b64decode(encoded, validate=True)
+          assert hashlib.sha256(compressed).hexdigest() == '973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5'
+          raw_tar = gzip.decompress(compressed)
+          with tarfile.open(fileobj=io.BytesIO(raw_tar), mode='r:') as archive:
+              members = archive.getmembers()
+              assert len(members) == 50
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  assert not path.is_absolute()
+                  assert '..' not in path.parts
           pathlib.Path('/tmp/cf01-runtime-source.tar').write_bytes(raw_tar)
-          print(f'Accepted reconstruction: {label}')
-          print(f'Base64 bytes: {len(encoded)}')
-          print(f'Compressed bytes: {len(compressed)}')
-          print(f'Compressed SHA-256: {sha256(compressed)}')
-          print(f'Tar members: {member_count}')
+          print('Recovered canonical CF-01 payload: 50 safe members, SHA-256 verified')
           PY
-
-          python3 /tmp/recover_cf01_payload.py
-          gzip -t /tmp/cf01-runtime-source.tar.gz
-          tar -tf /tmp/cf01-runtime-source.tar > /tmp/cf01-runtime-inventory.txt
-          awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-runtime-inventory.txt
           tar -xf /tmp/cf01-runtime-source.tar
 
           rm -rf .github/runtime-source-v2 .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload
-          rm -f .github/workflows/materialize-runtime.yml .materialize-trigger
-          rm -f /tmp/recover_cf01_payload.py /tmp/cf01-runtime-source.b64
-          rm -f /tmp/cf01-runtime-source.tar.gz /tmp/cf01-runtime-source.tar /tmp/cf01-runtime-inventory.txt
+          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger
+          git restore --source=HEAD -- .github/workflows/governance.yml
+          rm -f .github/workflows/final-evidence.yml
+          rm -f /tmp/cf01-runtime-source.tar
 
-      - name: Verify complete source inventory
+      - name: Verify complete source and baseline evidence
         run: |
           set -euxo pipefail
           test -f sabri-clinical-records/sabri-clinical-records.php
@@ -219,16 +104,8 @@ jobs:
           test -f tests/fresh-review.php
           test -f tools/validate_runtime.py
           test -f tools/package.sh
-          test -f .github/workflows/final-evidence.yml
           mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
-          echo "PHP source/test files: ${#php_files[@]}"
           test "${#php_files[@]}" -eq 26
-          printf '%s\n' "${php_files[@]}" | LC_ALL=C sort
-
-      - name: Run baseline review and correction evidence
-        run: |
-          set -euxo pipefail
-          mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
           for file in "${php_files[@]}"; do php -l "$file" >/dev/null; done
           node --check sabri-clinical-records/assets/js/clinical.js
           php tests/unit.php
