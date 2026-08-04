@@ -154,8 +154,6 @@ final class CF01_Authorization {
             'update_guardian_context' => 'cf01_manage_clinical_records',
             'record_consent' => 'cf01_manage_clinical_records',
             'propose_relationship' => 'cf01_manage_clinical_records',
-            'activate_relationship' => 'cf01_manage_clinical_records',
-            'transition_relationship' => 'cf01_manage_clinical_records',
             'decide_clinical_right' => 'cf01_manage_clinical_rights',
             'fulfill_clinical_export' => 'cf01_manage_clinical_rights',
             'view_access_history' => 'cf01_manage_clinical_rights',
@@ -172,23 +170,30 @@ final class CF01_Authorization {
             'relink_attachment' => 'cf01_review_clinical_assets',
         );
         if (in_array($action, $patient_actions, true)) {
-            $allowed = user_can($user_id, 'read');
+            $allowed = self::can($user_id, 'read');
         } elseif (isset($capability_map[$action])) {
-            $allowed = user_can($user_id, $capability_map[$action]);
+            $allowed = self::can($user_id, $capability_map[$action]);
         } elseif (str_contains($action, 'break_glass')) {
-            $allowed = user_can($user_id, 'cf01_use_break_glass');
+            $allowed = self::can($user_id, 'cf01_use_break_glass');
         } elseif (str_contains($action, 'attachment')) {
-            $allowed = user_can($user_id, 'cf01_manage_clinical_assets') || user_can($user_id, 'cf01_treat_patients');
+            $allowed = self::can($user_id, 'cf01_manage_clinical_assets') || self::can($user_id, 'cf01_treat_patients');
         } elseif (str_contains($action, 'rights') || str_contains($action, 'export')) {
-            $allowed = user_can($user_id, 'cf01_manage_clinical_rights');
+            $allowed = self::can($user_id, 'cf01_manage_clinical_rights');
         } elseif (str_contains($action, 'retention') || str_contains($action, 'hold')) {
-            $allowed = user_can($user_id, 'cf01_manage_retention');
+            $allowed = self::can($user_id, 'cf01_manage_retention');
         } elseif (str_contains($action, 'audit')) {
-            $allowed = user_can($user_id, 'cf01_audit_clinical');
+            $allowed = self::can($user_id, 'cf01_audit_clinical');
         } else {
-            $allowed = user_can($user_id, 'cf01_treat_patients') || user_can($user_id, 'cf01_manage_clinical_records');
+            $allowed = self::can($user_id, 'cf01_treat_patients') || self::can($user_id, 'cf01_manage_clinical_records');
         }
         return (bool) apply_filters('cf01_action_allowed', $allowed, $user_id, $action, $context);
+    }
+
+    private static function can(int $user_id, string $capability): bool {
+        if (function_exists('user_can')) {
+            return user_can($user_id, $capability);
+        }
+        return $user_id === get_current_user_id() && current_user_can($capability);
     }
 
     private static function utc_timestamp(string $value): ?int {
