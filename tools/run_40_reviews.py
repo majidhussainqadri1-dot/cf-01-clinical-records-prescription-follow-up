@@ -58,6 +58,15 @@ def excludes(source: str, *needles: str) -> Callable[[], None]:
     return check
 
 
+def cross_contains(*requirements: tuple[str, str]) -> Callable[[], None]:
+    def check() -> None:
+        for source, needle in requirements:
+            if needle not in SOURCES[source]:
+                raise AssertionError(f"{source} is missing cross-file invariant: {needle}")
+
+    return check
+
+
 def count_requirements() -> None:
     missing = [f"CF01-FR-{number:03d}" for number in range(1, 33) if f"CF01-FR-{number:03d}" not in SOURCES["plan"]]
     if missing:
@@ -88,7 +97,7 @@ class Round:
 
 ROUNDS = [
     Round(1, "Plan-to-runtime traceability", count_requirements),
-    Round(2, "Conditional activation fail-closed", contains("plugin", "CF01_ACTIVATION_DEFAULT", "disabled")),
+    Round(2, "Conditional activation fail-closed", contains("plugin", "update_option('cf01_activation_state', 'disabled'", "disabled-by-default clinical records")),
     Round(3, "Canonical clinical identity separation", contains("patients", "platform_subject_hash", "platform_subject_cipher", "clinical_uuid")),
     Round(4, "Explicit actor identity", contains("auth", "Clinical actor identity mismatch.", "cf01_allow_service_actor")),
     Round(5, "Membership eligibility", contains("auth", "membership($user_id)", "!empty($membership['suspended'])")),
@@ -106,7 +115,7 @@ ROUNDS = [
     Round(17, "Patient ownership boundary", contains("auth", "platform_subject_hash", "patient_owner")),
     Round(18, "Encounter context validation", contains("encounters", "validate_context", "Invalid encounter mode.")),
     Round(19, "Teleconsultation consent", contains("encounters", "consent($patient_uuid, 'teleconsultation')")),
-    Round(20, "Draft optimistic concurrency", contains("encounters", "update_versioned('encounters'", "Stale clinical record version.")),
+    Round(20, "Draft optimistic concurrency", cross_contains(("encounters", "update_versioned('encounters'"), ("auth", "Stale clinical record version."))),
     Round(21, "Signed encounter immutability", contains("encounters", "Signed or tombstoned encounter content is immutable.")),
     Round(22, "Addendum parent versioning", contains("encounters", "array('status' => 'addended')", "parent_row_version")),
     Round(23, "Entered-in-error relationship scope", contains("encounters", "mark_entered_in_error", "relationship((string) $row['patient_uuid']")),
@@ -126,7 +135,7 @@ ROUNDS = [
     Round(37, "Correction patient match and atomicity", contains("rights", "Correction case and encounter patient do not match.", "CF01_DB::transaction(function () use ($actor_id, $case_uuid")),
     Round(38, "Bounded non-truncating exports", contains("rights", "bounded_rows", "approved paginated export job")),
     Round(39, "Dual-PHP and deterministic package", workflow_matrix),
-    Round(40, "Integrated independent final review", contains("validator", "CF01-FR-032", "runtime_validation")),
+    Round(40, "Integrated independent final review", contains("validator", "CF01-FR-032", "CF-01 runtime policy validation PASS")),
 ]
 
 
