@@ -56,12 +56,13 @@ for path in files:
 
 required = [
     "README.md", "docs/REQUIREMENTS-TRACEABILITY.md", "docs/SECURITY-PRIVACY-ARCHITECTURE.md",
-    "docs/MIGRATION-ROLLBACK.md", "docs/RELEASE-STATUS.md", "tools/package.sh",
+    "docs/MIGRATION-ROLLBACK.md", "docs/RELEASE-STATUS.md", "docs/REVIEWS-40-CORRECTION-REGISTER.md",
+    "tools/package.sh", "tools/run_40_reviews.py",
     "sabri-clinical-records/sabri-clinical-records.php",
     "sabri-clinical-records/includes/class-cf01-authorization.php",
     "sabri-clinical-records/includes/class-cf01-migrations.php",
     "tests/unit.php", "tests/runtime-adversarial.php", "tests/static-audit.php",
-    "tests/migration-review.php", "tests/fresh-review.php",
+    "tests/migration-review.php", "tests/fresh-review.php", "tests/security-corrections.php",
 ]
 for rel in required:
     if not (ROOT / rel).is_file():
@@ -74,8 +75,8 @@ for number in range(1, 33):
         errors.append(f"{req} must appear exactly once in structured traceability")
 
 php_files = sorted((ROOT / "sabri-clinical-records").rglob("*.php")) + sorted((ROOT / "tests").glob("*.php"))
-if len(php_files) != 26:
-    errors.append(f"Expected 26 permanent PHP files, found {len(php_files)}")
+if len(php_files) != 27:
+    errors.append(f"Expected 27 permanent PHP files, found {len(php_files)}")
 
 plugin_php = sorted((ROOT / 'sabri-clinical-records').rglob('*.php'))
 source = '\n'.join(path.read_text(encoding='utf-8') for path in plugin_php)
