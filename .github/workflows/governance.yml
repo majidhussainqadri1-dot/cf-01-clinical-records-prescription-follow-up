@@ -74,8 +74,14 @@ jobs:
                     python3 tools/validate_runtime.py .
                     git diff --check
           YAML
-          echo '=== PHP syntax gate ==='
-          while IFS= read -r -d '' file; do php -l "$file"; done < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
+          echo '=== Extracted source inventory ==='
+          test -d sabri-clinical-records
+          test -d tests
+          find sabri-clinical-records tests -maxdepth 3 -type f -print | LC_ALL=C sort
+          mapfile -d '' php_files < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
+          test "${#php_files[@]}" -eq 27
+          echo "=== PHP syntax gate: ${#php_files[@]} files ==="
+          for file in "${php_files[@]}"; do php -l "$file"; done
           echo '=== JavaScript syntax gate ==='
           node --check sabri-clinical-records/assets/js/clinical.js
           echo '=== Runtime policy validator ==='
