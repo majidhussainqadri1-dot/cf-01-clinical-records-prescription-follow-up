@@ -1,16 +1,17 @@
 name: CF-01 Verified Runtime Materialization
 
 on:
-  push:
+  pull_request:
     branches:
-      - codex/cf-01-complete-runtime-1.0.0
+      - codex/cf-01-c1-a-foundation
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   materialize-complete-runtime:
-    if: github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'codex/cf-01-complete-runtime-1.0.0' && github.actor != 'github-actions[bot]'
     name: Materialize and validate complete CF-01 runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 20
