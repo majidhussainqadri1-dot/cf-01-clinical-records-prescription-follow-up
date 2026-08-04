@@ -22,16 +22,14 @@ jobs:
         with:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
-      - name: Materialize and diagnose reviewed runtime source
+      - name: Materialize and validate reviewed runtime source
         run: |
           set -euxo pipefail
-          cat .github/runtime-payload/part-* > /tmp/cf01-runtime-source.b64
-          base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
-          test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "5c3088b163d2e2a9351a44d25e8a89c8f9d0b5cd65bfda9c3190b8fc98021eb5"
-          tar -xzf /tmp/cf01-runtime-source.tar.gz
+          test "$(sha256sum .github/.cf01-runtime-source.payload | cut -d' ' -f1)" = "5c3088b163d2e2a9351a44d25e8a89c8f9d0b5cd65bfda9c3190b8fc98021eb5"
+          tar -xzf .github/.cf01-runtime-source.payload
           sed -i 's/[[:space:]]\+$//' docs/SECURITY-PRIVACY-ARCHITECTURE.md
           rm -rf .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.b64 /tmp/cf01-runtime-source.tar.gz
+          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger
           cat > .github/workflows/governance.yml <<'YAML'
           name: CF-01 Governance Continuity
 
