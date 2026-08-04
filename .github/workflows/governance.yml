@@ -32,7 +32,10 @@ jobs:
           echo "Verified source parts: ${part_count}"
           test "${part_count}" -eq 10
           find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort
-          cat .github/runtime-source-v2/part-* > /tmp/cf01-runtime-source.b64
+          : > /tmp/cf01-runtime-source.b64
+          while IFS= read -r part; do
+            tr -d '\r\n\t ' < "$part" >> /tmp/cf01-runtime-source.b64
+          done < <(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort)
           base64_size="$(wc -c < /tmp/cf01-runtime-source.b64)"
           echo "Base64 bytes: ${base64_size}"
           test "${base64_size}" -eq 81192
