@@ -6,12 +6,23 @@ final class CF01_Break_Glass {
     private const MAX_TTL = 15 * MINUTE_IN_SECONDS;
 
     public static function request(int $actor_id, string $patient_uuid, string $reason, array $context): array {
-        CF01_Authorization::clinician($actor_id, 'grant_break_glass');
-        if (trim($reason) === '') {
+        CF01_Patients::get($patient_uuid);
+        CF01_Authorization::clinician($actor_id, 'grant_break_glass', array('purpose' => 'emergency_care'));
+        $reason = trim($reason);
+        if ($reason === '') {
             throw new InvalidArgumentException('Explicit emergency reason is required.');
         }
         if (empty($context['emergency']) || !empty($context['bulk']) || !empty($context['export'])) {
             throw new RuntimeException('Break-glass is restricted to a single emergency minimum-view request.');
+        }
+        $requested_fields = CF01_Authorization::fields(
+            'break_glass',
+            'emergency_care',
+            array_values((array) ($context['requested_fields'] ?? array())),
+            array('patient_uuid' => $patient_uuid)
+        );
+        if (!$requested_fields) {
+            throw new InvalidArgumentException('At least one authorized emergency minimum-view field is required.');
         }
         $uuid = CF01_DB::uuid();
         $expires = gmdate('Y-m-d H:i:s', time() + self::MAX_TTL);
@@ -23,7 +34,7 @@ final class CF01_Break_Glass {
             'reason_cipher' => CF01_Crypto::encrypt($reason, 'break-glass-reason'),
             'context_cipher' => CF01_Crypto::encrypt(array(
                 'emergency' => true,
-                'requested_fields' => array_values((array) ($context['requested_fields'] ?? array())),
+                'requested_fields' => $requested_fields,
                 'location' => sanitize_text_field((string) ($context['location'] ?? '')),
                 'device' => sanitize_text_field((string) ($context['device'] ?? '')),
             ), 'break-glass-context'),
@@ -36,7 +47,7 @@ final class CF01_Break_Glass {
             'created_at' => CF01_DB::now(),
             'updated_at' => CF01_DB::now(),
         ));
-        CF01_Audit::record($actor_id, 'BreakGlassGranted', 'break_glass', $uuid, 'emergency_care', array('expires_at' => $expires));
+        CF01_Audit::record($actor_id, 'BreakGlassGranted', 'break_glass', $uuid, 'emergency_care', array('expires_at' => $expires, 'fields' => $requested_fields));
         CF01_Outbox::enqueue('BreakGlassGranted', array('grant_uuid' => $uuid, 'patient_uuid' => $patient_uuid, 'expires_at' => $expires), $uuid);
         return self::get($uuid);
     }
@@ -46,10 +57,17 @@ final class CF01_Break_Glass {
         if ((int) $row['actor_user_id'] !== $actor_id || ($row['status'] ?? '') !== 'granted') {
             throw new RuntimeException('Break-glass grant is unavailable.');
         }
-        if (strtotime((string) $row['expires_at'] . ' UTC') <= time()) {
+        if (!CF01_Authorization::not_expired((string) $row['expires_at'])) {
             self::expire($row);
             throw new RuntimeException('Break-glass grant expired.');
         }
+        CF01_Authorization::clinician($actor_id, 'use_break_glass', array('purpose' => 'emergency_care'));
+        $context = CF01_Crypto::decrypt((string) ($row['context_cipher'] ?? ''), 'break-glass-context');
+        if (!is_array($context) || empty($context['emergency'])) {
+            throw new RuntimeException('Break-glass context is unavailable.');
+        }
+        $granted_fields = array_values(array_unique(array_map('sanitize_key', (array) ($context['requested_fields'] ?? array()))));
+        $requested_fields = array_values(array_intersect(array_map('sanitize_key', $requested_fields), $granted_fields));
         $allowed = CF01_Authorization::fields('break_glass', 'emergency_care', $requested_fields, array('patient_uuid' => $row['patient_uuid']));
         if (!$allowed) {
             throw new RuntimeException('No emergency minimum-view fields are authorized.');
@@ -74,7 +92,8 @@ final class CF01_Break_Glass {
         if (($row['status'] ?? '') !== 'granted') {
             return $row;
         }
-        if (trim($reason) === '') {
+        $reason = trim($reason);
+        if ($reason === '') {
             throw new InvalidArgumentException('Revocation reason is required.');
         }
         $ok = CF01_DB::update_versioned('breakglass', array(
@@ -97,6 +116,9 @@ final class CF01_Break_Glass {
         CF01_Authorization::expected_version($row, $expected_version);
         if ((int) $row['actor_user_id'] === $actor_id) {
             throw new RuntimeException('Break-glass user cannot self-review the access.');
+        }
+        if (($row['review_status'] ?? '') === 'reviewed') {
+            throw new RuntimeException('Break-glass access was already reviewed.');
         }
         if (empty($review['finding'])) {
             throw new InvalidArgumentException('Break-glass review finding is required.');
@@ -127,7 +149,15 @@ final class CF01_Break_Glass {
     }
 
     private static function expire(array $row): void {
-        CF01_DB::update_versioned('breakglass', array('status' => 'expired', 'review_status' => 'pending'), array('grant_uuid' => $row['grant_uuid']), (int) $row['row_version']);
+        $updated = CF01_DB::update_versioned(
+            'breakglass',
+            array('status' => 'expired', 'review_status' => 'pending'),
+            array('grant_uuid' => $row['grant_uuid']),
+            (int) $row['row_version']
+        );
+        if (!$updated) {
+            return;
+        }
         CF01_Audit::system('BreakGlassExpired', 'break_glass', (string) $row['grant_uuid'], 'emergency_care', array());
         CF01_Outbox::enqueue('BreakGlassExpired', array('grant_uuid' => $row['grant_uuid'], 'patient_uuid' => $row['patient_uuid']), (string) $row['grant_uuid']);
     }
