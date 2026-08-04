@@ -22,9 +22,9 @@ jobs:
         with:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
-      - name: Materialize reviewed runtime source
+      - name: Materialize and diagnose reviewed runtime source
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           cat .github/runtime-payload/part-* > /tmp/cf01-runtime-source.b64
           base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
           test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "5c3088b163d2e2a9351a44d25e8a89c8f9d0b5cd65bfda9c3190b8fc98021eb5"
@@ -53,11 +53,10 @@ jobs:
               env:
                 PYTHONDONTWRITEBYTECODE: "1"
               steps:
-                - name: Checkout exact immutable head
+                - name: Checkout exact event head
                   uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
                   with:
                     persist-credentials: false
-                    ref: ${{ github.event.pull_request.head.sha || github.sha }}
                 - name: Verify inherited C1-A governance evidence
                   run: |
                     set -euo pipefail
@@ -74,10 +73,15 @@ jobs:
                     python3 tools/validate_runtime.py .
                     git diff --check
           YAML
-          find sabri-clinical-records tests -name '*.php' -type f -print0 | xargs -0 -n1 php -l >/dev/null
+          echo '=== PHP syntax gate ==='
+          while IFS= read -r -d '' file; do php -l "$file"; done < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
+          echo '=== JavaScript syntax gate ==='
           node --check sabri-clinical-records/assets/js/clinical.js
+          echo '=== Runtime policy validator ==='
           python3 tools/validate_runtime.py .
+          echo '=== Repository diff hygiene ==='
           git diff --check
+          echo '=== Materialization validation complete ==='
       - name: Commit complete runtime candidate
         run: |
           set -euo pipefail
