@@ -26,13 +26,20 @@ jobs:
 
       - name: Verify and extract reviewed source payload
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           test -d .github/runtime-source-v2
-          test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 10
+          part_count="$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)"
+          echo "Verified source parts: ${part_count}"
+          test "${part_count}" -eq 10
+          find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort
           cat .github/runtime-source-v2/part-* > /tmp/cf01-runtime-source.b64
-          test "$(wc -c < /tmp/cf01-runtime-source.b64)" -eq 81192
+          base64_size="$(wc -c < /tmp/cf01-runtime-source.b64)"
+          echo "Base64 bytes: ${base64_size}"
+          test "${base64_size}" -eq 81192
           base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
-          test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5"
+          payload_hash="$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)"
+          echo "Payload SHA-256: ${payload_hash}"
+          test "${payload_hash}" = "973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5"
           gzip -t /tmp/cf01-runtime-source.tar.gz
           tar -tzf /tmp/cf01-runtime-source.tar.gz > /tmp/cf01-runtime-inventory.txt
           awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.($|\/)/{bad=1} END{exit bad}' /tmp/cf01-runtime-inventory.txt
@@ -45,7 +52,7 @@ jobs:
 
       - name: Verify complete source inventory
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           test -f sabri-clinical-records/sabri-clinical-records.php
           test -f sabri-clinical-records/assets/js/clinical.js
           test -f tests/unit.php
@@ -58,12 +65,13 @@ jobs:
           test -f .github/workflows/governance.yml
           test -f .github/workflows/final-evidence.yml
           mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
+          echo "PHP source/test files: ${#php_files[@]}"
           test "${#php_files[@]}" -eq 26
           printf '%s\n' "${php_files[@]}" | LC_ALL=C sort
 
       - name: Run complete review and correction evidence
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
           for file in "${php_files[@]}"; do php -l "$file" >/dev/null; done
           node --check sabri-clinical-records/assets/js/clinical.js
@@ -78,7 +86,7 @@ jobs:
 
       - name: Commit reviewable runtime source
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
