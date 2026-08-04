@@ -15,8 +15,15 @@ final class CF01_Relationships {
     public static function propose(int $actor_id, string $patient_uuid, int $doctor_user_id, array $data): array {
         CF01_Authorization::actor($actor_id, 'propose_relationship');
         CF01_Patients::get($patient_uuid);
+        if ($doctor_user_id <= 0) {
+            throw new InvalidArgumentException('A treating doctor is required.');
+        }
         $purpose = sanitize_key((string) ($data['purpose'] ?? 'clinical_care'));
-        $scope = array_values(array_unique(array_map('sanitize_key', (array) ($data['scope'] ?? array('care')))));
+        if (!in_array($purpose, array('clinical_care', 'teleconsultation'), true)) {
+            throw new InvalidArgumentException('Unsupported treating relationship purpose.');
+        }
+        self::require_target_practitioner($doctor_user_id, 'propose_relationship', $purpose);
+        $scope = array_values(array_unique(array_filter(array_map('sanitize_key', (array) ($data['scope'] ?? array('care'))))));
         if (!$scope) {
             throw new InvalidArgumentException('Relationship scope is required.');
         }
@@ -43,42 +50,67 @@ final class CF01_Relationships {
 
     public static function activate(int $actor_id, string $relationship_uuid, int $expected_version): array {
         $row = self::get($relationship_uuid);
-        CF01_Authorization::actor($actor_id, 'activate_relationship');
+        self::authorize_relationship_actor($actor_id, $row, 'activate_relationship');
         CF01_Authorization::expected_version($row, $expected_version);
-        CF01_Authorization::clinician((int) $row['doctor_user_id'], 'activate_relationship');
+        self::require_target_practitioner((int) $row['doctor_user_id'], 'activate_relationship', (string) $row['purpose']);
         CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
-        if (($row['status'] ?? '') === 'proposed') {
-            $pending = CF01_DB::update_versioned('relationships', array('status' => 'identity_consent_pending'), array('relationship_uuid' => $relationship_uuid), $expected_version);
-            if (!$pending) {
+
+        CF01_DB::transaction(function () use ($actor_id, $relationship_uuid, $row, $expected_version): void {
+            $current = $row;
+            $version = $expected_version;
+            if (($current['status'] ?? '') === 'proposed') {
+                $pending = CF01_DB::update_versioned(
+                    'relationships',
+                    array('status' => 'identity_consent_pending', 'authorized_by' => $actor_id),
+                    array('relationship_uuid' => $relationship_uuid),
+                    $version
+                );
+                if (!$pending) {
+                    throw new RuntimeException('Relationship changed concurrently.');
+                }
+                $current = self::get($relationship_uuid);
+                $version = (int) $current['row_version'];
+            }
+            self::transition_allowed((string) $current['status'], 'active');
+            $ok = CF01_DB::update_versioned('relationships', array(
+                'status' => 'active',
+                'starts_at' => CF01_DB::now(),
+                'ends_at' => null,
+                'authorized_by' => $actor_id,
+            ), array('relationship_uuid' => $relationship_uuid), $version);
+            if (!$ok) {
                 throw new RuntimeException('Relationship changed concurrently.');
             }
-            $row = self::get($relationship_uuid);
-            $expected_version = (int) $row['row_version'];
-        }
-        self::transition_allowed((string) $row['status'], 'active');
-        $ok = CF01_DB::update_versioned('relationships', array(
-            'status' => 'active',
-            'starts_at' => CF01_DB::now(),
-            'authorized_by' => $actor_id,
-        ), array('relationship_uuid' => $relationship_uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Relationship changed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'CareRelationshipActivated', 'care_relationship', $relationship_uuid, (string) $row['purpose'], array());
-        CF01_Outbox::enqueue('CareRelationshipActivated', array('relationship_uuid' => $relationship_uuid, 'patient_uuid' => $row['patient_uuid']), $relationship_uuid);
+            CF01_Audit::record($actor_id, 'CareRelationshipActivated', 'care_relationship', $relationship_uuid, (string) $current['purpose'], array());
+            CF01_Outbox::enqueue('CareRelationshipActivated', array('relationship_uuid' => $relationship_uuid, 'patient_uuid' => $current['patient_uuid']), $relationship_uuid);
+        });
         return self::get($relationship_uuid);
     }
 
     public static function transition(int $actor_id, string $relationship_uuid, string $next, string $reason, int $expected_version): array {
         $row = self::get($relationship_uuid);
+        self::authorize_relationship_actor($actor_id, $row, 'transition_relationship');
         CF01_Authorization::expected_version($row, $expected_version);
+        $next = sanitize_key($next);
         self::transition_allowed((string) $row['status'], $next);
+        $reason = trim($reason);
         if ($reason === '') {
             throw new InvalidArgumentException('A relationship transition reason is required.');
         }
-        $data = array('status' => $next, 'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'));
+        if ($next === 'active') {
+            self::require_target_practitioner((int) $row['doctor_user_id'], 'reactivate_relationship', (string) $row['purpose']);
+            CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
+        }
+        $data = array(
+            'status' => $next,
+            'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
+            'authorized_by' => $actor_id,
+        );
         if ($next === 'ended') {
             $data['ends_at'] = CF01_DB::now();
+        } elseif ($next === 'active') {
+            $data['starts_at'] = CF01_DB::now();
+            $data['ends_at'] = null;
         }
         $ok = CF01_DB::update_versioned('relationships', $data, array('relationship_uuid' => $relationship_uuid), $expected_version);
         if (!$ok) {
@@ -106,5 +138,30 @@ final class CF01_Relationships {
 
     public static function transition_map(): array {
         return self::TRANSITIONS;
+    }
+
+    private static function authorize_relationship_actor(int $actor_id, array $relationship, string $action): void {
+        CF01_Authorization::actor($actor_id, $action, array(
+            'patient_uuid' => (string) $relationship['patient_uuid'],
+            'relationship_uuid' => (string) $relationship['relationship_uuid'],
+        ));
+        if ((int) $relationship['doctor_user_id'] !== $actor_id && !user_can($actor_id, 'cf01_manage_clinical_records')) {
+            throw new RuntimeException('Only the assigned treating doctor or an authorized records operator may change this relationship.');
+        }
+    }
+
+    private static function require_target_practitioner(int $doctor_user_id, string $action, string $purpose): array {
+        $professional = CF01_Contracts::practitioner($doctor_user_id, $action);
+        if (empty($professional['valid']) || empty($professional['eligible']) || empty($professional['verified']) || !empty($professional['suspended'])) {
+            throw new RuntimeException('Current professional eligibility is required for the assigned doctor.');
+        }
+        if (!CF01_Authorization::not_expired((string) ($professional['expires_at'] ?? ''))) {
+            throw new RuntimeException('Assigned doctor professional eligibility has expired.');
+        }
+        $scopes = array_map('sanitize_key', (array) ($professional['scopes'] ?? array()));
+        if ($scopes && !in_array($purpose, $scopes, true) && !in_array('clinical_care', $scopes, true)) {
+            throw new RuntimeException('Assigned doctor professional scope does not authorize this purpose.');
+        }
+        return $professional;
     }
 }
