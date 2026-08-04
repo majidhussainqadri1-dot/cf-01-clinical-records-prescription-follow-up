@@ -145,7 +145,10 @@ final class CF01_Relationships {
             'patient_uuid' => (string) $relationship['patient_uuid'],
             'relationship_uuid' => (string) $relationship['relationship_uuid'],
         ));
-        if ((int) $relationship['doctor_user_id'] !== $actor_id && !user_can($actor_id, 'cf01_manage_clinical_records')) {
+        $manager = function_exists('user_can')
+            ? user_can($actor_id, 'cf01_manage_clinical_records')
+            : current_user_can('cf01_manage_clinical_records');
+        if ((int) $relationship['doctor_user_id'] !== $actor_id && !$manager) {
             throw new RuntimeException('Only the assigned treating doctor or an authorized records operator may change this relationship.');
         }
     }
