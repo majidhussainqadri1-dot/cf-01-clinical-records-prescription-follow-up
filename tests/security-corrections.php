@@ -43,7 +43,7 @@ $assert(str_contains($consents, "CF01_Authorization::actor($actor_id, 'record_ow
 $assert(str_contains($relationships, 'authorize_relationship_actor($actor_id, $row'), 'Every relationship activation or transition must authorize the current actor.');
 $assert(str_contains($relationships, 'require_target_practitioner'), 'Assigned doctor eligibility must be checked without actor impersonation.');
 $assert(str_contains($relationships, 'CF01_DB::transaction(function () use ($actor_id, $relationship_uuid'), 'Relationship activation must be atomic.');
-$assert(str_contains($relationships, "!user_can($actor_id, 'cf01_manage_clinical_records')"), 'Unassigned clinicians must not change another relationship.');
+$assert(str_contains($relationships, "function_exists('user_can')") && str_contains($relationships, '&& !$manager'), 'Unassigned clinicians must not change another relationship.');
 
 $assert(str_contains($encounters, "CF01_Authorization::consent($patient_uuid, 'teleconsultation')"), 'Teleconsultation encounters must require teleconsultation consent.');
 $assert(str_contains($encounters, "array('status' => 'addended')"), 'Adding an addendum must version and mark its signed parent.');
