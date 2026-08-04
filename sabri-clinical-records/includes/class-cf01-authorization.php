@@ -66,12 +66,17 @@ final class CF01_Authorization {
     }
 
     public static function relationship(string $clinical_patient_uuid, int $doctor_user_id, string $purpose): array {
-        global $wpdb;
         $row = CF01_DB::row(
             'SELECT * FROM ' . CF01_DB::table('relationships') . ' WHERE patient_uuid = %s AND doctor_user_id = %d AND status = %s AND purpose = %s ORDER BY id DESC LIMIT 1',
             array($clinical_patient_uuid, $doctor_user_id, 'active', $purpose)
         );
-        if (!$row || (!empty($row['ends_at']) && strtotime((string) $row['ends_at'] . ' UTC') <= time())) {
+        if (!$row) {
+            throw new RuntimeException('An active treating relationship is required.');
+        }
+        $now = time();
+        $starts_at = self::utc_timestamp((string) ($row['starts_at'] ?? ''));
+        $ends_at = self::utc_timestamp((string) ($row['ends_at'] ?? ''));
+        if ($starts_at === null || $starts_at > $now || ($ends_at !== null && $ends_at <= $now)) {
             throw new RuntimeException('An active treating relationship is required.');
         }
         return $row;
@@ -79,10 +84,14 @@ final class CF01_Authorization {
 
     public static function consent(string $clinical_patient_uuid, string $purpose): array {
         $row = CF01_DB::row(
-            'SELECT * FROM ' . CF01_DB::table('consents') . ' WHERE patient_uuid = %s AND purpose = %s AND status = %s ORDER BY id DESC LIMIT 1',
-            array($clinical_patient_uuid, $purpose, 'granted')
+            'SELECT * FROM ' . CF01_DB::table('consents') . ' WHERE patient_uuid = %s AND purpose = %s ORDER BY id DESC LIMIT 1',
+            array($clinical_patient_uuid, $purpose)
         );
-        if (!$row || (!empty($row['expires_at']) && strtotime((string) $row['expires_at'] . ' UTC') <= time())) {
+        if (!$row || ($row['status'] ?? '') !== 'granted') {
+            throw new RuntimeException('Active purpose-specific consent is required.');
+        }
+        $expires_at = self::utc_timestamp((string) ($row['expires_at'] ?? ''));
+        if ($expires_at !== null && $expires_at <= time()) {
             throw new RuntimeException('Active purpose-specific consent is required.');
         }
         return $row;
@@ -99,8 +108,9 @@ final class CF01_Authorization {
             'break_glass' => array('summary', 'active_prescriptions', 'allergies', 'red_flags', 'recent_encounters'),
             'auditor' => array('control_metadata', 'masked_audit'),
         );
-        $allowed = $policy[$role] ?? array();
-        $allowed = apply_filters('cf01_field_policy', $allowed, $role, $purpose, $record);
+        $requested = array_values(array_unique(array_map('sanitize_key', $requested)));
+        $allowed = array_map('sanitize_key', $policy[$role] ?? array());
+        $allowed = array_values(array_unique(array_map('sanitize_key', (array) apply_filters('cf01_field_policy', $allowed, $role, $purpose, $record))));
         return array_values(array_intersect($requested, $allowed));
     }
 
@@ -118,11 +128,8 @@ final class CF01_Authorization {
     }
 
     public static function not_expired(string $utc): bool {
-        if ($utc === '') {
-            return false;
-        }
-        $time = strtotime($utc . (str_contains($utc, 'Z') || str_contains($utc, '+') ? '' : ' UTC'));
-        return is_int($time) && $time > time();
+        $timestamp = self::utc_timestamp($utc);
+        return $timestamp !== null && $timestamp > time();
     }
 
     public static function expected_version(array $row, int $expected): void {
@@ -134,19 +141,24 @@ final class CF01_Authorization {
     private static function capability_allowed(int $user_id, string $action, array $context): bool {
         $patient_actions = array(
             'view_own_clinical_record', 'view_own_clinical_timeline', 'submit_patient_outcome',
-            'request_clinical_right', 'view_access_history', 'export_record'
+            'request_clinical_right', 'record_own_consent', 'view_own_access_history', 'export_record'
         );
         $capability_map = array(
             'activate_module' => 'cf01_activate_clinical',
             'disable_module' => 'cf01_activate_clinical',
             'create_patient' => 'cf01_manage_clinical_records',
+            'create_clinical_patient' => 'cf01_manage_clinical_records',
             'link_patient_identity' => 'cf01_manage_clinical_records',
+            'link_platform_identity' => 'cf01_manage_clinical_records',
             'merge_patient' => 'cf01_manage_clinical_records',
             'update_guardian_context' => 'cf01_manage_clinical_records',
             'record_consent' => 'cf01_manage_clinical_records',
             'propose_relationship' => 'cf01_manage_clinical_records',
+            'activate_relationship' => 'cf01_manage_clinical_records',
+            'transition_relationship' => 'cf01_manage_clinical_records',
             'decide_clinical_right' => 'cf01_manage_clinical_rights',
             'fulfill_clinical_export' => 'cf01_manage_clinical_rights',
+            'view_access_history' => 'cf01_manage_clinical_rights',
             'manage_retention' => 'cf01_manage_retention',
             'place_hold' => 'cf01_manage_retention',
             'release_hold' => 'cf01_manage_retention',
@@ -160,24 +172,35 @@ final class CF01_Authorization {
             'relink_attachment' => 'cf01_review_clinical_assets',
         );
         if (in_array($action, $patient_actions, true)) {
-            $allowed = current_user_can('read');
+            $allowed = user_can($user_id, 'read');
         } elseif (isset($capability_map[$action])) {
-            $allowed = current_user_can($capability_map[$action]);
+            $allowed = user_can($user_id, $capability_map[$action]);
         } elseif (str_contains($action, 'break_glass')) {
-            $allowed = current_user_can('cf01_use_break_glass');
+            $allowed = user_can($user_id, 'cf01_use_break_glass');
         } elseif (str_contains($action, 'attachment')) {
-            $allowed = current_user_can('cf01_manage_clinical_assets') || current_user_can('cf01_treat_patients');
+            $allowed = user_can($user_id, 'cf01_manage_clinical_assets') || user_can($user_id, 'cf01_treat_patients');
         } elseif (str_contains($action, 'rights') || str_contains($action, 'export')) {
-            $allowed = current_user_can('cf01_manage_clinical_rights');
+            $allowed = user_can($user_id, 'cf01_manage_clinical_rights');
         } elseif (str_contains($action, 'retention') || str_contains($action, 'hold')) {
-            $allowed = current_user_can('cf01_manage_retention');
+            $allowed = user_can($user_id, 'cf01_manage_retention');
         } elseif (str_contains($action, 'audit')) {
-            $allowed = current_user_can('cf01_audit_clinical');
+            $allowed = user_can($user_id, 'cf01_audit_clinical');
         } else {
-            $allowed = current_user_can('cf01_treat_patients') || current_user_can('cf01_manage_clinical_records');
+            $allowed = user_can($user_id, 'cf01_treat_patients') || user_can($user_id, 'cf01_manage_clinical_records');
         }
         return (bool) apply_filters('cf01_action_allowed', $allowed, $user_id, $action, $context);
     }
 
+    private static function utc_timestamp(string $value): ?int {
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+        try {
+            $date = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+            return $date->getTimestamp();
+        } catch (Throwable $error) {
+            return null;
+        }
+    }
 }
-
