@@ -14,7 +14,7 @@ jobs:
     if: github.head_ref == 'codex/cf-01-complete-runtime-1.0.0' && github.actor != 'github-actions[bot]'
     name: Materialize and validate complete CF-01 runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -43,8 +43,41 @@ jobs:
             normalized="$(mktemp)"
             tr -cd 'A-Za-z0-9+/=' < "$part" > "$normalized"
             size="$(wc -c < "$normalized")"
-            echo "${name}: normalized_size=${size} sha256=$(sha256sum "$normalized" | cut -d' ' -f1)"
-            test "$size" -eq "${expected_sizes[$name]}"
+            hash="$(sha256sum "$normalized" | cut -d' ' -f1)"
+            echo "${name}: normalized_size=${size} sha256=${hash}"
+
+            if [ "$name" = 'part-006' ] && [ "$size" -eq 8999 ]; then
+              python3 - "$normalized" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          original = path.read_bytes()
+          expected = '31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
+          alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          matches = []
+          for position in range(len(original) + 1):
+              prefix = original[:position]
+              suffix = original[position:]
+              for value in alphabet:
+                  candidate = prefix + bytes((value,)) + suffix
+                  if hashlib.sha256(candidate).hexdigest() == expected:
+                      matches.append((position, value, candidate))
+          if len(matches) != 1:
+              raise SystemExit(f'Expected exactly one cryptographic recovery match, found {len(matches)}')
+          position, value, candidate = matches[0]
+          path.write_bytes(candidate)
+          print(f'Recovered part-006 at byte offset {position} with Base64 character {chr(value)!r}')
+          PY
+              size="$(wc -c < "$normalized")"
+              hash="$(sha256sum "$normalized" | cut -d' ' -f1)"
+              test "$size" -eq 9000
+              test "$hash" = '31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
+            else
+              test "$size" -eq "${expected_sizes[$name]}"
+            fi
+
             cat "$normalized" >> /tmp/cf01-runtime-source.b64
             rm -f "$normalized"
           done < <(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort)
