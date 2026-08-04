@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-      - name: Run syntax and five review suites
+      - name: Run syntax and six review suites
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD:/app" -w /app "php:${{ matrix.php }}-cli" sh -lc '
@@ -35,7 +35,24 @@ jobs:
             php tests/static-audit.php
             php tests/migration-review.php
             php tests/fresh-review.php
+            php tests/security-corrections.php
           '
+
+  forty-round-review:
+    name: Forty review and correction rounds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout exact event head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Run 40 review-to-correction cycles
+        run: |
+          set -euo pipefail
+          python3 tools/run_40_reviews.py
 
   policy-package-review:
     name: Policy, JavaScript and deterministic package review
@@ -52,6 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check sabri-clinical-records/assets/js/clinical.js
+          php tests/security-corrections.php
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/validate_runtime.py .
           git diff --check
