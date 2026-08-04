@@ -79,7 +79,7 @@ jobs:
           test -d tests
           find sabri-clinical-records tests -maxdepth 3 -type f -print | LC_ALL=C sort
           mapfile -d '' php_files < <(find sabri-clinical-records tests -name '*.php' -type f -print0)
-          test "${#php_files[@]}" -eq 27
+          test "${#php_files[@]}" -eq 25
           echo "=== PHP syntax gate: ${#php_files[@]} files ==="
           for file in "${php_files[@]}"; do php -l "$file"; done
           echo '=== JavaScript syntax gate ==='
