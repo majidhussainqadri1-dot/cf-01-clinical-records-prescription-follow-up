@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   materialize-complete-runtime:
-    if: github.ref == 'refs/heads/codex/cf-01-complete-runtime-1.0.0' && github.actor != 'github-actions[bot]'
+    if: (github.ref == 'refs/heads/codex/cf-01-complete-runtime-1.0.0' || github.head_ref == 'codex/cf-01-complete-runtime-1.0.0') && github.actor != 'github-actions[bot]'
     name: Atomic complete runtime materialization
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -83,7 +83,7 @@ jobs:
           git push origin HEAD:codex/cf-01-complete-runtime-1.0.0
 
   c1-a-public-safety:
-    if: github.ref != 'refs/heads/codex/cf-01-complete-runtime-1.0.0'
+    if: github.ref != 'refs/heads/codex/cf-01-complete-runtime-1.0.0' && github.head_ref != 'codex/cf-01-complete-runtime-1.0.0'
     name: C1-A public-safety and policy tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
