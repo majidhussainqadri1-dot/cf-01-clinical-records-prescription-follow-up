@@ -1,0 +1,40 @@
+:root {
+  --cf01-orange: #b84f00;
+  --cf01-text: #171717;
+  --cf01-muted: #5b5b5b;
+  --cf01-border: #c9c9c9;
+  --cf01-bg: #fff;
+  --cf01-soft: #f7f7f7;
+  --cf01-danger: #8b0000;
+  --cf01-focus: #005fcc;
+}
+.cf01-app {
+  box-sizing: border-box;
+  max-width: 76rem;
+  margin-inline: auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  color: var(--cf01-text);
+  background: var(--cf01-bg);
+  font: 1rem/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+.cf01-app *, .cf01-app *::before, .cf01-app *::after { box-sizing: inherit; }
+.cf01-app header { border-block-end: .25rem solid var(--cf01-orange); margin-block-end: 1.5rem; }
+.cf01-app h1, .cf01-app h2 { line-height: 1.25; }
+.cf01-app h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); }
+.cf01-card, .cf01-state { border: 1px solid var(--cf01-border); border-radius: .75rem; padding: 1.25rem; background: var(--cf01-soft); }
+.cf01-state--error { border-color: var(--cf01-danger); }
+.cf01-summary { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 2fr); gap: .75rem 1rem; }
+.cf01-summary dt { font-weight: 700; }
+.cf01-summary dd { margin: 0; }
+.cf01-button { min-width: 44px; min-height: 44px; padding: .65rem 1rem; border: 2px solid var(--cf01-orange); border-radius: .4rem; background: #fff; color: var(--cf01-text); font: inherit; cursor: pointer; }
+.cf01-button:hover { background: #fff4eb; }
+.cf01-app :focus-visible { outline: 3px solid var(--cf01-focus); outline-offset: 3px; }
+.cf01-skip { position: absolute; inset-inline-start: 1rem; inset-block-start: -10rem; padding: .75rem; background: #fff; color: #000; z-index: 9999; }
+.cf01-skip:focus { inset-block-start: 1rem; }
+.cf01-loading { min-height: 6rem; display: grid; place-items: center; }
+.cf01-trace { color: var(--cf01-muted); font-family: ui-monospace, monospace; font-size: .875rem; }
+[dir="rtl"] .cf01-app { text-align: start; }
+@media (max-width: 36rem) { .cf01-summary { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .cf01-app *, .cf01-app *::before, .cf01-app *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+@media (forced-colors: active) { .cf01-card, .cf01-state, .cf01-button { border: 2px solid CanvasText; } }

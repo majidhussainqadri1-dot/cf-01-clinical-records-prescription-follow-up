@@ -1,0 +1,53 @@
+<?php
+require __DIR__ . '/bootstrap.php';
+$root = dirname(__DIR__);
+$count = 0;
+$failures = array();
+$check = function (bool $condition, string $message) use (&$count, &$failures): void { $count++; if (!$condition) $failures[] = $message; };
+$files = array();
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/sabri-clinical-records', FilesystemIterator::SKIP_DOTS));
+foreach ($iterator as $file) if ($file->isFile()) $files[] = $file->getPathname();
+$check(count(array_filter($files, fn($f) => str_ends_with($f, '.php'))) === 20, 'Unexpected plugin PHP inventory.');
+$check(is_file($root . '/README.md'), 'README missing.');
+$check(is_file($root . '/docs/RELEASE-STATUS.md'), 'Release status missing.');
+$check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Staging-Accepted: pending'), 'Staging must not be falsely claimed.');
+$check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Live-Deployed: pending'), 'Live deployment must not be falsely claimed.');
+$check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Operational: pending'), 'Operational status must not be falsely claimed.');
+$main = file_get_contents($root . '/sabri-clinical-records/sabri-clinical-records.php');
+$check(str_contains($main, 'Version: 1.0.0'), 'Plugin version mismatch.');
+$check(str_contains($main, 'Requires PHP: 8.1'), 'Minimum PHP mismatch.');
+$check(str_contains($main, "update_option('cf01_activation_state', 'disabled'"), 'Activation must default disabled.');
+$check(str_contains($main, 'CF01_SCHEMA_INSTALL_APPROVED'), 'Schema must not install without approval.');
+$rest = file_get_contents($root . '/sabri-clinical-records/includes/class-cf01-rest.php');
+$check(substr_count($rest, 'register_rest_route') === 1, 'REST route registration should be centralized.');
+$check(str_contains($rest, 'permission_callback'), 'REST permissions missing.');
+$check(!str_contains($rest, '__return_true'), 'Permissive REST callback prohibited.');
+$check(str_contains($rest, 'Idempotency-Key'), 'Mutation idempotency missing.');
+$check(str_contains($rest, 'If-Match'), 'Optimistic concurrency header missing.');
+$check(str_contains($rest, 'trace_id'), 'Safe trace ID missing.');
+$check(str_contains($rest, 'no-store'), 'Private response cache law missing.');
+$contracts = file_get_contents($root . '/sabri-clinical-records/includes/class-cf01-contracts.php');
+foreach (array("'1.1.2'", "'1.0.0'", 'contract_version_mismatch', 'native_enforcement_preserved', 'communication_context', 'secure_media', 'shell_routes', 'visual_components', 'register_assurance') as $token) $check(str_contains($contracts, $token), 'Contract boundary missing: ' . $token);
+$audit = file_get_contents($root . '/sabri-clinical-records/includes/class-cf01-audit-outbox.php');
+foreach (array('previous_hash','chain_hash','metadata_cipher','payload_cipher','dead_letter','retryable','CF01_Contracts::notify') as $token) $check(str_contains(strtolower($audit), strtolower($token)), 'Audit/outbox invariant missing: ' . $token);
+$css = file_get_contents($root . '/sabri-clinical-records/assets/css/clinical.css');
+foreach (array(':focus-visible','prefers-reduced-motion','forced-colors','[dir="rtl"]','44px') as $token) $check(str_contains($css, $token), 'Accessibility/RTL token missing: ' . $token);
+$js = file_get_contents($root . '/sabri-clinical-records/assets/js/clinical.js');
+foreach (array("cache: 'no-store'", "credentials: 'same-origin'", "redirect: 'error'", "referrerPolicy: 'no-referrer'", 'AbortController', 'pagehide') as $token) $check(str_contains($js, $token), 'Browser privacy/reliability token missing: ' . $token);
+foreach (array('localStorage','sessionStorage','indexedDB','serviceWorker','document.cookie') as $token) $check(!str_contains($js, $token), 'Forbidden browser persistence: ' . $token);
+$package = file_get_contents($root . '/tools/package.sh');
+foreach (array('SOURCE_DATE_EPOCH','MANIFEST.sha256','zip -X','sha256sum') as $token) $check(str_contains($package, $token), 'Deterministic package invariant missing: ' . $token);
+if ($failures) { fwrite(STDERR, implode("\n", $failures) . "\n"); exit(1); }
+
+$rightsSource = file_get_contents(CF01_DIR . 'includes/class-cf01-rights.php');
+$check(str_contains($rightsSource, 'A rights requester cannot decide the same request.'), 'Rights separation-of-duties guard missing.');
+$check(str_contains($rightsSource, 'export_manifest_for_case'), 'Case-authorized export manifest missing.');
+$check(str_contains($rightsSource, "CF01_Crypto::decrypt"), 'Readable export decryption missing.');
+$followupSource = file_get_contents(CF01_DIR . 'includes/class-cf01-followups.php');
+$check(str_contains($followupSource, 'overdue_at') && str_contains($followupSource, 'reconcile_row'), 'Distinct follow-up overdue threshold missing.');
+$retentionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-retention.php');
+$check(str_contains($retentionSource, 'hold placer cannot release') && str_contains($retentionSource, 'approved_by_user_id'), 'Retention dual control missing.');
+$prescriptionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-prescriptions.php');
+$check(str_contains($prescriptionSource, 'PrescriptionSupersessionCompensated'), 'Supersession compensation missing.');
+
+echo "CF-01 fresh independent review: {$count} PASS, 0 FAIL\n";
