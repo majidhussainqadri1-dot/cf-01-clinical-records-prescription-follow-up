@@ -29,15 +29,36 @@ jobs:
           set -euxo pipefail
           test -d .github/runtime-source-v2
           part_count="$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)"
-          echo "Verified source parts: ${part_count}"
           test "${part_count}" -eq 10
-          find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort
+
+          declare -A expected_hashes=(
+            [part-000]='19ca786c38154a35190ddd300fdf677e2074c3447aa13ab08f2e6191ad38fcb5'
+            [part-001]='dae899b7b9ab857c7370113ecf21bc391090581af02022d86cd2a292839b5c12'
+            [part-002]='e9d440e670177dbc933f50573bc7e471f02648e60a0363b3fd4c51c33151e5e2'
+            [part-003]='1b4dcebd39b64e2955d4dcc4048482896d4cee3b70e2ed784bf6ebd2b9a89e2e'
+            [part-004]='fab42b50591fd658fff052ae3428c11958ad7862089ac59c9c9b57bfb9d702e9'
+            [part-005]='26fa6364ad4730356fc06c13a88011d832f9cae0af503ad87c9a5e501a01ee60'
+            [part-006]='31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
+            [part-007]='7f6977c9aec1c452597c659ca436b8816bbc53ddcb8ec29a77f51d037f1606bd'
+            [part-008]='d9c5d1af1cba0f850b04e455cee8fc6fae124265ca0836f223577e70bbc83358'
+            [part-009]='3650989a4f4e4cb09bab92e6f92b430d556c39666ca4f53812b7ab2482796ca6'
+          )
+
           : > /tmp/cf01-runtime-source.b64
           while IFS= read -r part; do
-            tr -d '\r\n\t ' < "$part" >> /tmp/cf01-runtime-source.b64
+            name="$(basename "$part")"
+            normalized="$(mktemp)"
+            tr -cd 'A-Za-z0-9+/=' < "$part" > "$normalized"
+            size="$(wc -c < "$normalized")"
+            hash="$(sha256sum "$normalized" | cut -d' ' -f1)"
+            echo "${name}: size=${size} sha256=${hash}"
+            if [ "$name" = 'part-009' ]; then test "$size" -eq 192; else test "$size" -eq 9000; fi
+            test "$hash" = "${expected_hashes[$name]}"
+            cat "$normalized" >> /tmp/cf01-runtime-source.b64
+            rm -f "$normalized"
           done < <(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' -print | LC_ALL=C sort)
+
           base64_size="$(wc -c < /tmp/cf01-runtime-source.b64)"
-          echo "Base64 bytes: ${base64_size}"
           test "${base64_size}" -eq 81192
           base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
           payload_hash="$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)"
@@ -68,7 +89,6 @@ jobs:
           test -f .github/workflows/governance.yml
           test -f .github/workflows/final-evidence.yml
           mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
-          echo "PHP source/test files: ${#php_files[@]}"
           test "${#php_files[@]}" -eq 26
           printf '%s\n' "${php_files[@]}" | LC_ALL=C sort
 
