@@ -22,6 +22,16 @@ jobs:
         with:
           ref: codex/cf-01-complete-runtime-1.0.0
           fetch-depth: 0
+      - name: Export immutable payload for forensic recovery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cf01-immutable-runtime-payload-${{ github.sha }}
+          path: .github/.cf01-runtime-source.payload
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: true
       - name: Recover, materialize and validate reviewed runtime source
         run: |
           set -euxo pipefail
