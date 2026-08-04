@@ -21,8 +21,7 @@ final class CF01_Consents {
         }
         self::validate_subject_identity($patient, (string) $evidence['subject_platform_uuid']);
         $demographics = CF01_Patients::demographics($patient);
-        $dob = isset($demographics['date_of_birth']) ? strtotime((string) $demographics['date_of_birth'] . ' UTC') : false;
-        $is_minor = is_int($dob) && strtotime('-18 years') < $dob;
+        $is_minor = self::is_legal_minor($patient_uuid, $demographics);
         if ($is_minor) {
             $guardian = CF01_Patients::guardian_context($patient);
             if (($guardian['status'] ?? '') !== 'verified') {
@@ -63,6 +62,7 @@ final class CF01_Consents {
         if (($row['status'] ?? '') !== 'granted') {
             throw new RuntimeException('Only an active consent may be withdrawn.');
         }
+        $reason = trim($reason);
         if ($reason === '') {
             throw new InvalidArgumentException('Consent withdrawal reason is required.');
         }
@@ -96,19 +96,24 @@ final class CF01_Consents {
         }
     }
 
-
-
     private static function authorize_subject(int $actor_id, string $patient_uuid, array $patient, array $evidence): void {
         if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
-            CF01_Authorization::actor($actor_id, 'request_clinical_right');
+            CF01_Authorization::actor($actor_id, 'record_own_consent');
             return;
         }
         $guardian = CF01_Patients::guardian_context($patient);
         $membership = CF01_Contracts::membership($actor_id);
-        $guardian_actor = !empty($membership['valid']) && !empty($guardian['platform_uuid']) && hash_equals((string) $guardian['platform_uuid'], (string) $membership['platform_uuid']);
-        $guardian_reference = !empty($evidence['guardian']['reference']) && !empty($guardian['reference']) && hash_equals((string) $guardian['reference'], (string) $evidence['guardian']['reference']);
-        if (($guardian['status'] ?? '') === 'verified' && ($guardian_actor || $guardian_reference)) {
-            CF01_Authorization::actor($actor_id, 'request_clinical_right');
+        $guardian_actor = !empty($membership['valid'])
+            && !empty($membership['approved'])
+            && empty($membership['suspended'])
+            && !empty($guardian['platform_uuid'])
+            && hash_equals((string) $guardian['platform_uuid'], (string) ($membership['platform_uuid'] ?? ''));
+        if (($guardian['status'] ?? '') === 'verified' && $guardian_actor) {
+            $presented_reference = (string) ($evidence['guardian']['reference'] ?? '');
+            if ($presented_reference !== '' && !empty($guardian['reference']) && !hash_equals((string) $guardian['reference'], $presented_reference)) {
+                throw new RuntimeException('Guardian evidence does not match current verified authority.');
+            }
+            CF01_Authorization::actor($actor_id, 'record_own_consent');
             return;
         }
         CF01_Authorization::clinician($actor_id, 'record_consent');
@@ -126,14 +131,34 @@ final class CF01_Consents {
         }
     }
 
+    private static function is_legal_minor(string $patient_uuid, array $demographics): bool {
+        $date_of_birth = trim((string) ($demographics['date_of_birth'] ?? ''));
+        if ($date_of_birth === '') {
+            return false;
+        }
+        try {
+            $birth = new DateTimeImmutable($date_of_birth, new DateTimeZone('UTC'));
+            $today = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        } catch (Throwable $error) {
+            return false;
+        }
+        $majority_age = (int) apply_filters('cf01_legal_majority_age', 18, $patient_uuid, $demographics);
+        $majority_age = max(12, min(25, $majority_age));
+        return $birth->modify('+' . $majority_age . ' years') > $today;
+    }
+
     private static function normalize_expiry($value): ?string {
         if ($value === null || $value === '') {
             return null;
         }
-        $timestamp = strtotime((string) $value);
-        if (!is_int($timestamp) || $timestamp <= time()) {
+        try {
+            $date = new DateTimeImmutable((string) $value, new DateTimeZone('UTC'));
+        } catch (Throwable $error) {
             throw new InvalidArgumentException('Consent expiry must be a future date.');
         }
-        return gmdate('Y-m-d H:i:s', $timestamp);
+        if ($date->getTimestamp() <= time()) {
+            throw new InvalidArgumentException('Consent expiry must be a future date.');
+        }
+        return $date->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 }
