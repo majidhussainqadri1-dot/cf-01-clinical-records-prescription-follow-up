@@ -22,10 +22,10 @@ final class CF01_Rights {
         if (!in_array($type, self::TYPES, true)) {
             throw new InvalidArgumentException('Unsupported clinical rights request.');
         }
-        $is_owner = CF01_Authorization::patient_owner($actor_id, $patient_uuid);
-        if (!$is_owner) {
-            CF01_Authorization::actor($actor_id, 'request_clinical_right');
-            self::guardian_or_representative($patient_uuid, $request);
+        CF01_Patients::get($patient_uuid);
+        CF01_Authorization::actor($actor_id, 'request_clinical_right');
+        if (!CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+            self::guardian_or_representative($actor_id, $patient_uuid, $request);
         }
         $uuid = CF01_DB::uuid();
         CF01_DB::insert('rights', array(
@@ -128,14 +128,9 @@ final class CF01_Rights {
         if (($row['status'] ?? '') !== 'fulfilled' || empty($row['export_token_hash']) || !hash_equals((string) $row['export_token_hash'], hash('sha256', $token))) {
             throw new RuntimeException('Export is unavailable.');
         }
-        if (!empty($row['export_token_consumed_at']) || strtotime((string) $row['export_token_expires_at'] . ' UTC') <= time()) {
+        if (!empty($row['export_token_consumed_at']) || !CF01_Authorization::not_expired((string) ($row['export_token_expires_at'] ?? ''))) {
             throw new RuntimeException('Export token expired or was already used.');
         }
-        $ok = CF01_DB::update_versioned('rights', array('export_token_consumed_at' => CF01_DB::now()), array('case_uuid' => $uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Export token was consumed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'ClinicalExportDownloaded', 'clinical_rights_case', $uuid, 'export', array());
         $reference = CF01_Crypto::decrypt((string) $row['export_reference_cipher'], 'rights-export-reference');
         if (!is_string($reference) || $reference === '') {
             throw new RuntimeException('Export is unavailable.');
@@ -152,28 +147,39 @@ final class CF01_Rights {
         if (empty($delivery['valid']) || empty($delivery['accepted']) || empty($delivery['delivery_grant'])) {
             throw new RuntimeException('Export delivery is unavailable.');
         }
+        $ok = CF01_DB::update_versioned('rights', array('export_token_consumed_at' => CF01_DB::now()), array('case_uuid' => $uuid), $expected_version);
+        if (!$ok) {
+            throw new RuntimeException('Export token was consumed concurrently.');
+        }
+        CF01_Audit::record($actor_id, 'ClinicalExportDownloaded', 'clinical_rights_case', $uuid, 'export', array());
         return (string) $delivery['delivery_grant'];
     }
 
     public static function correction_addendum(int $actor_id, string $case_uuid, string $encounter_uuid, array $correction, int $expected_version): array {
         $case = self::get($case_uuid);
+        CF01_Authorization::actor($actor_id, 'fulfill_clinical_correction');
         CF01_Authorization::expected_version($case, $expected_version);
         if (($case['request_type'] ?? '') !== 'correction' || !in_array((string) $case['status'], array('approved', 'partially_approved'), true)) {
             throw new RuntimeException('Approved correction request is required.');
         }
-        $addendum = CF01_Encounters::addendum($actor_id, $encounter_uuid, array(
-            'narrative' => (string) ($correction['narrative'] ?? ''),
-            'provenance' => array('rights_case_uuid' => $case_uuid, 'requested_by_user_id' => $case['requested_by_user_id']),
-        ));
-        $ok = CF01_DB::update_versioned('rights', array('status' => 'fulfilled', 'fulfilled_at' => CF01_DB::now()), array('case_uuid' => $case_uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Rights case changed concurrently.');
+        $encounter = CF01_Encounters::get($encounter_uuid);
+        if (!hash_equals((string) $case['patient_uuid'], (string) $encounter['patient_uuid'])) {
+            throw new RuntimeException('Correction case and encounter patient do not match.');
         }
-        CF01_Audit::record($actor_id, 'ClinicalCorrectionFulfilled', 'clinical_rights_case', $case_uuid, 'correction', array('addendum_uuid' => $addendum['encounter_uuid']));
-        return $addendum;
+        $result = CF01_DB::transaction(function () use ($actor_id, $case_uuid, $encounter_uuid, $correction, $case, $expected_version): array {
+            $addendum = CF01_Encounters::addendum($actor_id, $encounter_uuid, array(
+                'narrative' => (string) ($correction['narrative'] ?? ''),
+                'provenance' => array('rights_case_uuid' => $case_uuid, 'requested_by_user_id' => $case['requested_by_user_id']),
+            ));
+            $ok = CF01_DB::update_versioned('rights', array('status' => 'fulfilled', 'fulfilled_at' => CF01_DB::now()), array('case_uuid' => $case_uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Rights case changed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalCorrectionFulfilled', 'clinical_rights_case', $case_uuid, 'correction', array('addendum_uuid' => $addendum['encounter_uuid']));
+            return $addendum;
+        });
+        return $result;
     }
-
-
 
     public static function export_manifest(int $actor_id, string $patient_uuid, array $scope): array {
         if (!CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
@@ -200,7 +206,7 @@ final class CF01_Rights {
     }
 
     private static function build_export_manifest(string $patient_uuid, array $scope, string $authority): array {
-        $allowed = array_values(array_intersect($scope, array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access_history')));
+        $allowed = array_values(array_unique(array_intersect(array_map('sanitize_key', $scope), array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access_history'))));
         if (!$allowed) {
             throw new InvalidArgumentException('At least one export scope is required.');
         }
@@ -215,7 +221,7 @@ final class CF01_Rights {
         );
         foreach (array('consents','encounters','observations','assessments','prescriptions','followups','outcomes') as $key) {
             if (in_array($key, $allowed, true)) {
-                $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY id ASC LIMIT 10000', array($patient_uuid));
+                $rows = self::bounded_rows($key, $patient_uuid, 10000);
                 $manifest['records'][$key] = array_map(static fn(array $row): array => self::export_row($key, $row), $rows);
             }
         }
@@ -223,13 +229,28 @@ final class CF01_Rights {
             $manifest['records']['demographics'] = CF01_Patients::demographics(CF01_Patients::get($patient_uuid));
         }
         if (in_array('access_history', $allowed, true)) {
-            $manifest['records']['access_history'] = CF01_DB::rows(
-                'SELECT event_uuid, actor_pseudonym, action, object_type, purpose, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s ORDER BY occurred_at DESC LIMIT 100',
+            $rows = CF01_DB::rows(
+                'SELECT event_uuid, actor_pseudonym, action, object_type, purpose, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s ORDER BY occurred_at DESC LIMIT 1001',
                 array($patient_uuid)
             );
+            if (count($rows) > 1000) {
+                throw new RuntimeException('Clinical access history exceeds the bounded export package; use an approved paginated export job.');
+            }
+            $manifest['records']['access_history'] = $rows;
         }
         $manifest['manifest_hash'] = hash('sha256', CF01_Crypto::canonical_json($manifest));
         return $manifest;
+    }
+
+    private static function bounded_rows(string $key, string $patient_uuid, int $limit): array {
+        $rows = CF01_DB::rows(
+            'SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY id ASC LIMIT ' . ($limit + 1),
+            array($patient_uuid)
+        );
+        if (count($rows) > $limit) {
+            throw new RuntimeException('Clinical export exceeds the bounded synchronous package; use an approved paginated export job.');
+        }
+        return $rows;
     }
 
     private static function export_row(string $entity, array $row): array {
@@ -263,7 +284,10 @@ final class CF01_Rights {
     }
 
     public static function access_history(int $actor_id, string $patient_uuid, int $limit = 50, string $before = ''): array {
-        if (!CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+        CF01_Patients::get($patient_uuid);
+        if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+            CF01_Authorization::actor($actor_id, 'view_own_access_history');
+        } else {
             CF01_Authorization::actor($actor_id, 'view_access_history');
         }
         $limit = max(1, min(100, $limit));
@@ -289,15 +313,21 @@ final class CF01_Rights {
         return self::STATES;
     }
 
-    private static function guardian_or_representative(string $patient_uuid, array $request): void {
+    private static function guardian_or_representative(int $actor_id, string $patient_uuid, array $request): void {
         $patient = CF01_Patients::get($patient_uuid);
         $guardian = CF01_Patients::guardian_context($patient);
-        $membership = CF01_Contracts::membership(get_current_user_id());
-        $reference = (string) ($request['representative_reference'] ?? '');
-        $same_actor = !empty($membership['valid']) && !empty($guardian['platform_uuid']) && hash_equals((string) $guardian['platform_uuid'], (string) $membership['platform_uuid']);
-        $same_reference = $reference !== '' && !empty($guardian['reference']) && hash_equals((string) $guardian['reference'], $reference);
-        if (($guardian['status'] ?? '') !== 'verified' || (!$same_actor && !$same_reference)) {
+        $membership = CF01_Contracts::membership($actor_id);
+        $same_actor = !empty($membership['valid'])
+            && !empty($membership['approved'])
+            && empty($membership['suspended'])
+            && !empty($guardian['platform_uuid'])
+            && hash_equals((string) $guardian['platform_uuid'], (string) ($membership['platform_uuid'] ?? ''));
+        if (($guardian['status'] ?? '') !== 'verified' || !$same_actor) {
             throw new RuntimeException('Verified representative authority is required.');
+        }
+        $reference = (string) ($request['representative_reference'] ?? '');
+        if ($reference !== '' && !empty($guardian['reference']) && !hash_equals((string) $guardian['reference'], $reference)) {
+            throw new RuntimeException('Representative evidence does not match current verified authority.');
         }
     }
 
