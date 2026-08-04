@@ -29,6 +29,7 @@ jobs:
           base64 --decode /tmp/cf01-runtime-source.b64 > /tmp/cf01-runtime-source.tar.gz
           test "$(sha256sum /tmp/cf01-runtime-source.tar.gz | cut -d' ' -f1)" = "5c3088b163d2e2a9351a44d25e8a89c8f9d0b5cd65bfda9c3190b8fc98021eb5"
           tar -xzf /tmp/cf01-runtime-source.tar.gz
+          sed -i 's/[[:space:]]\+$//' docs/SECURITY-PRIVACY-ARCHITECTURE.md
           rm -rf .github/runtime-payload
           rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger /tmp/cf01-runtime-source.b64 /tmp/cf01-runtime-source.tar.gz
           cat > .github/workflows/governance.yml <<'YAML'
