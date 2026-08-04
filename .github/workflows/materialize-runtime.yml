@@ -1,0 +1,38 @@
+name: One-time CF-01 Runtime Materialization
+
+on:
+  push:
+    branches:
+      - codex/cf-01-complete-runtime-1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact runtime branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: codex/cf-01-complete-runtime-1.0.0
+          fetch-depth: 0
+      - name: Materialize reviewed runtime source
+        run: |
+          set -euo pipefail
+          tar -xzf .github/.cf01-runtime-source.payload
+          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml
+          find sabri-clinical-records tests -name '*.php' -type f -print0 | xargs -0 -n1 php -l >/dev/null
+          node --check sabri-clinical-records/assets/js/clinical.js
+          python3 tools/validate_runtime.py .
+          git diff --check
+      - name: Commit complete runtime candidate
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Implement complete CF-01 clinical runtime candidate 1.0.0'
+          git push origin HEAD:codex/cf-01-complete-runtime-1.0.0
