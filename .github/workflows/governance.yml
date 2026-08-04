@@ -1,127 +1,71 @@
-name: CF-01 Verified Runtime Materialization
+name: CF-01 Exact-Head Review Gates
 
 on:
-  pull_request:
+  push:
     branches:
-      - codex/cf-01-c1-a-foundation
-    types: [opened, synchronize, reopened]
+      - main
+      - "codex/**"
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  materialize-complete-runtime:
-    if: github.head_ref == 'codex/cf-01-complete-runtime-1.0.0' && github.actor != 'github-actions[bot]'
-    name: Materialize and validate complete CF-01 runtime
+  php-review:
+    name: PHP ${{ matrix.php }} clinical review
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.1", "8.3"]
+    steps:
+      - name: Checkout exact event head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Run syntax and five review suites
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/app" -w /app "php:${{ matrix.php }}-cli" sh -lc '
+            set -eu
+            find sabri-clinical-records tests -type f -name "*.php" -print0 | xargs -0 -n1 php -l >/dev/null
+            php tests/unit.php
+            php tests/runtime-adversarial.php
+            php tests/static-audit.php
+            php tests/migration-review.php
+            php tests/fresh-review.php
+          '
+
+  policy-package-review:
+    name: Policy, JavaScript and deterministic package review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - name: Checkout exact runtime branch
+      - name: Checkout exact event head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: codex/cf-01-complete-runtime-1.0.0
-          fetch-depth: 0
-
-      - name: Recover exact reviewed source payload
+          persist-credentials: false
+      - name: Validate repository and runtime policy
         run: |
-          set -euxo pipefail
-          test "$(find .github/runtime-source-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" -eq 12
-          python3 - <<'PY'
-          import base64
-          import gzip
-          import hashlib
-          import io
-          import pathlib
-          import tarfile
-
-          root = pathlib.Path('.github/runtime-source-v2')
-          alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
-          def clean(name):
-              raw = (root / name).read_bytes()
-              return bytes(ch for ch in raw if ch in alphabet or ch == ord('='))
-
-          part000 = bytearray(clean('part-000a') + clean('part-000b'))
-          part000[3372] = ord('k')
-          part000 = bytes(part000)
-          assert hashlib.sha256(part000).hexdigest() == '19ca786c38154a35190ddd300fdf677e2074c3447aa13ab08f2e6191ad38fcb5'
-
-          part002 = clean('part-002a') + clean('part-002b')
-          assert hashlib.sha256(part002).hexdigest() == 'e9d440e670177dbc933f50573bc7e471f02648e60a0363b3fd4c51c33151e5e2'
-
-          part006_raw = clean('part-006')
-          part006 = part006_raw[:3504] + b'X' + part006_raw[3504:]
-          assert hashlib.sha256(part006).hexdigest() == '31b81f8eb22cbc1ff1852105cfc93787afa764257e8a334b76a4f67dd1cb7244'
-
-          part009_raw = clean('part-009')
-          part009 = part009_raw[:69] + part009_raw[85:]
-
-          encoded = b''.join([
-              part000,
-              clean('part-001'),
-              part002,
-              clean('part-003'),
-              clean('part-004'),
-              clean('part-005'),
-              part006,
-              clean('part-007'),
-              clean('part-008'),
-              part009,
-          ])
-          assert len(encoded) == 81192
-          compressed = base64.b64decode(encoded, validate=True)
-          assert hashlib.sha256(compressed).hexdigest() == '973619a722e1c5ec19f23a668142c95a31f353ad6b1533a928459f4169cab9f5'
-          raw_tar = gzip.decompress(compressed)
-          with tarfile.open(fileobj=io.BytesIO(raw_tar), mode='r:') as archive:
-              members = archive.getmembers()
-              assert len(members) == 50
-              for member in members:
-                  path = pathlib.PurePosixPath(member.name)
-                  assert not path.is_absolute()
-                  assert '..' not in path.parts
-          pathlib.Path('/tmp/cf01-runtime-source.tar').write_bytes(raw_tar)
-          print('Recovered canonical CF-01 payload: 50 safe members, SHA-256 verified')
-          PY
-          tar -xf /tmp/cf01-runtime-source.tar
-
-          rm -rf .github/runtime-source-v2 .github/runtime-payload
-          rm -f .github/.cf01-runtime-source.payload .github/workflows/materialize-runtime.yml .materialize-trigger
-          git restore --source=HEAD -- .github/workflows/governance.yml
-          rm -f .github/workflows/final-evidence.yml
-          rm -f /tmp/cf01-runtime-source.tar
-
-      - name: Verify complete source and baseline evidence
-        run: |
-          set -euxo pipefail
-          test -f sabri-clinical-records/sabri-clinical-records.php
-          test -f sabri-clinical-records/assets/js/clinical.js
-          test -f tests/unit.php
-          test -f tests/runtime-adversarial.php
-          test -f tests/static-audit.php
-          test -f tests/migration-review.php
-          test -f tests/fresh-review.php
-          test -f tools/validate_runtime.py
-          test -f tools/package.sh
-          mapfile -d '' php_files < <(find sabri-clinical-records tests -type f -name '*.php' -print0)
-          test "${#php_files[@]}" -eq 26
-          for file in "${php_files[@]}"; do php -l "$file" >/dev/null; done
+          set -euo pipefail
           node --check sabri-clinical-records/assets/js/clinical.js
-          php tests/unit.php
-          php tests/runtime-adversarial.php
-          php tests/static-audit.php
-          php tests/migration-review.php
-          php tests/fresh-review.php
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/validate_runtime.py .
           git diff --check
-
-      - name: Commit reviewable runtime source
+      - name: Verify deterministic installable package
         run: |
-          set -euxo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'Implement complete CF-01 clinical runtime candidate 1.0.0'
-          git push origin HEAD:codex/cf-01-complete-runtime-1.0.0
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rsync zip unzip >/dev/null
+          bash tools/package.sh
+          first_hash="$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | awk '{print $1}')"
+          cp build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip /tmp/cf01-first.zip
+          bash tools/package.sh
+          second_hash="$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | awk '{print $1}')"
+          test "$first_hash" = "$second_hash"
+          cmp -s /tmp/cf01-first.zip build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
+          unzip -t build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip >/dev/null
+          test "$(unzip -Z1 build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | cut -d/ -f1 | sort -u)" = "sabri-clinical-records"
