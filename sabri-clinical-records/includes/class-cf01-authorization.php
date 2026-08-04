@@ -193,7 +193,7 @@ final class CF01_Authorization {
         if (function_exists('user_can')) {
             return user_can($user_id, $capability);
         }
-        return $user_id === get_current_user_id() && current_user_can($capability);
+        return current_user_can($capability);
     }
 
     private static function utc_timestamp(string $value): ?int {
