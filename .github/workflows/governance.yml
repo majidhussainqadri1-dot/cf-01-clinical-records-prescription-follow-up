@@ -74,6 +74,12 @@ jobs:
           def sha256(data: bytes) -> str:
               return hashlib.sha256(data).hexdigest()
 
+          def normalize_member_name(name: str) -> str:
+              normalized_name = name.rstrip('/')
+              while normalized_name.startswith('./'):
+                  normalized_name = normalized_name[2:]
+              return normalized_name
+
           def normalized(path: pathlib.Path) -> bytes:
               raw = path.read_bytes()
               value = bytes(ch for ch in raw if ch in ALPHABET or ch == ord('='))
@@ -109,14 +115,15 @@ jobs:
                   raw_tar = gzip.decompress(compressed)
                   with tarfile.open(fileobj=io.BytesIO(raw_tar), mode='r:') as archive:
                       members = archive.getmembers()
-                      names = {member.name.rstrip('/') for member in members}
                       if len(members) < 40:
                           raise ValueError(f'archive contains only {len(members)} members')
+                      normalized_names = set()
                       for member in members:
-                          path = pathlib.PurePosixPath(member.name)
-                          if path.is_absolute() or '..' in path.parts:
+                          original_path = pathlib.PurePosixPath(member.name)
+                          if original_path.is_absolute() or '..' in original_path.parts:
                               raise ValueError(f'unsafe archive path: {member.name}')
-                      missing = sorted(REQUIRED_ARCHIVE_PATHS - names)
+                          normalized_names.add(normalize_member_name(member.name))
+                      missing = sorted(REQUIRED_ARCHIVE_PATHS - normalized_names)
                       if missing:
                           raise ValueError(f'missing required paths: {missing}')
                   return compressed, raw_tar, len(members)
