@@ -2,10 +2,11 @@
 
 **Date:** 05 August 2026  
 **Branch:** `codex/cf-01-three-plan-correction-r1`  
+**Deterministic plugin package SHA-256:** `6967242b62250b1711c9643f29d2fda5a7c5eef9a8937d28331b28619dc3b1ea`  
 **Scope:** source-level integration, activation, disabled-runtime migration and rollback controls.  
 **Truth boundary:** this record is automated source evidence only; it is not legal, clinical, penetration-test, Hostinger-staging, backup/restore or production acceptance.
 
-The exact immutable final head, workflow run and package checksum are recorded in the pull-request evidence after the final content commit. This committed document deliberately avoids claiming its own commit SHA.
+The exact immutable final head and workflow run are recorded in the pull-request evidence after the final content commit. This committed document deliberately avoids claiming its own commit SHA.
 
 ## 1. Governing baselines
 
@@ -97,7 +98,7 @@ The final exact head must pass:
 - all ten PHP suites, including both Round-4 adversarial suites;
 - repository-policy tests and runtime validator;
 - 32/32 functional requirement traceability;
-- two byte-identical package builds with one recorded SHA-256.
+- two byte-identical package builds with SHA-256 `6967242b62250b1711c9643f29d2fda5a7c5eef9a8937d28331b28619dc3b1ea`.
 
 ## 5. Canonical operational entrypoints
 
