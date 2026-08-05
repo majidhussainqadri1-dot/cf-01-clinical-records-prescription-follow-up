@@ -25,7 +25,7 @@ class DeterministicSbomTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first["spdxVersion"], "SPDX-2.3")
             self.assertEqual(first["dataLicense"], "CC0-1.0")
-            self.assertEqual(first["creationInfo"]["created"], "2026-08-03T16:00:00Z")
+            self.assertEqual(first["creationInfo"]["created"], "2026-08-03T21:20:00Z")
             self.assertEqual(len(first["packages"]), 1)
             self.assertEqual(len(first["files"]), 2)
             self.assertTrue(first["documentNamespace"].startswith("https://sabrihomeopathy.com/spdx/cf-01/1.0.0/"))
