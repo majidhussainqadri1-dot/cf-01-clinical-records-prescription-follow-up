@@ -6,6 +6,7 @@ final class CF01_REST {
 
     public static function register_routes(): void {
         $routes = array(
+            array('/me', 'GET', 'my_record'),
             array('/patients', 'POST', 'create_patient'),
             array('/patients/(?P<patient>[a-f0-9-]{36})', 'GET', 'patient'),
             array('/patients/(?P<patient>[a-f0-9-]{36})/relationships', 'POST', 'propose_relationship'),
@@ -19,9 +20,11 @@ final class CF01_REST {
             array('/encounters/(?P<id>[a-f0-9-]{36})/addenda', 'POST', 'addendum'),
             array('/encounters/(?P<id>[a-f0-9-]{36})/attachments', 'POST', 'attach'),
             array('/prescriptions', 'POST', 'create_prescription'),
+            array('/prescriptions/(?P<id>[a-f0-9-]{36})', 'GET', 'prescription'),
             array('/prescriptions/(?P<id>[a-f0-9-]{36})/sign', 'POST', 'sign_prescription'),
             array('/prescriptions/(?P<id>[a-f0-9-]{36})/discontinue', 'POST', 'discontinue_prescription'),
             array('/followups', 'POST', 'plan_followup'),
+            array('/followups/(?P<id>[a-f0-9-]{36})', 'GET', 'followup'),
             array('/followups/(?P<id>[a-f0-9-]{36})/outcomes', 'POST', 'submit_outcome'),
             array('/outcomes/(?P<id>[a-f0-9-]{36})/review', 'POST', 'review_outcome'),
             array('/break-glass', 'POST', 'break_glass'),
@@ -50,22 +53,52 @@ final class CF01_REST {
         return true;
     }
 
+    public static function my_record(WP_REST_Request $request): WP_REST_Response {
+        return self::respond(function () use ($request): array {
+            $actor = get_current_user_id();
+            $context = CF01_Authorization::actor($actor, 'view_own_clinical_record');
+            $platform_uuid = (string) ($context['membership']['platform_uuid'] ?? '');
+            $patient = CF01_Patients::for_platform_subject($platform_uuid);
+            $patient_uuid = (string) $patient['clinical_uuid'];
+            $fields = CF01_Authorization::fields(
+                'patient',
+                'clinical_care',
+                self::requested_fields($request, array('summary', 'encounters', 'prescriptions', 'followups', 'consents', 'access_history')),
+                array('patient_uuid' => $patient_uuid)
+            );
+            $record = self::project_patient($patient_uuid, $fields);
+            CF01_Audit::access($actor, $patient_uuid, 'OwnClinicalRecordViewed', 'clinical_patient', $patient_uuid, 'clinical_care', 'success');
+            return $record;
+        });
+    }
+
     public static function create_patient(WP_REST_Request $request): WP_REST_Response {
-        return self::mutate($request, 'CreateClinicalPatient', function () use ($request): array { $data = self::json($request); $membership = CF01_Contracts::membership(get_current_user_id()); if (empty($membership['valid'])) { throw new RuntimeException('Membership assertion is unavailable.'); } return CF01_Patients::create(get_current_user_id(), (string) $membership['platform_uuid'], (array) ($data['demographics'] ?? array()), sanitize_text_field((string) ($data['jurisdiction'] ?? ''))); });
+        return self::mutate($request, 'CreateClinicalPatient', function () use ($request): array {
+            $data = self::json($request);
+            $membership = CF01_Contracts::membership(get_current_user_id());
+            if (empty($membership['valid'])) {
+                throw new RuntimeException('Membership assertion is unavailable.');
+            }
+            return CF01_Patients::create(
+                get_current_user_id(),
+                (string) $membership['platform_uuid'],
+                (array) ($data['demographics'] ?? array()),
+                sanitize_text_field((string) ($data['jurisdiction'] ?? ''))
+            );
+        });
     }
 
     public static function patient(WP_REST_Request $request): WP_REST_Response {
         return self::respond(function () use ($request): array {
             $patient_uuid = (string) $request['patient'];
             $actor = get_current_user_id();
-            $role = CF01_Authorization::patient_owner($actor, $patient_uuid) ? 'patient' : 'doctor';
-            if ($role === 'doctor') {
-                CF01_Authorization::clinician($actor, 'view_clinical_record');
-                CF01_Authorization::relationship($patient_uuid, $actor, 'clinical_care');
-            } else {
-                CF01_Authorization::actor($actor, 'view_own_clinical_record');
-            }
-            $fields = CF01_Authorization::fields($role, 'clinical_care', self::requested_fields($request), array('patient_uuid' => $patient_uuid));
+            $role = self::authorize_patient_read($actor, $patient_uuid, 'view_clinical_record');
+            $fields = CF01_Authorization::fields(
+                $role,
+                'clinical_care',
+                self::requested_fields($request, array('summary', 'encounters', 'prescriptions', 'followups', 'consents')),
+                array('patient_uuid' => $patient_uuid)
+            );
             $record = self::project_patient($patient_uuid, $fields);
             CF01_Audit::access($actor, $patient_uuid, 'ClinicalRecordViewed', 'clinical_patient', $patient_uuid, 'clinical_care', 'success');
             return $record;
@@ -82,7 +115,13 @@ final class CF01_REST {
     public static function record_consent(WP_REST_Request $request): WP_REST_Response {
         return self::mutate($request, 'RecordConsent', function () use ($request): array {
             $data = self::json($request);
-            return CF01_Consents::record(get_current_user_id(), (string) $request['patient'], sanitize_key((string) ($data['purpose'] ?? '')), sanitize_key((string) ($data['status'] ?? '')), (array) ($data['evidence'] ?? array()));
+            return CF01_Consents::record(
+                get_current_user_id(),
+                (string) $request['patient'],
+                sanitize_key((string) ($data['purpose'] ?? '')),
+                sanitize_key((string) ($data['status'] ?? '')),
+                (array) ($data['evidence'] ?? array())
+            );
         });
     }
 
@@ -108,10 +147,7 @@ final class CF01_REST {
         return self::respond(function () use ($request): array {
             $row = CF01_Encounters::get((string) $request['id']);
             $actor = get_current_user_id();
-            if (!CF01_Authorization::patient_owner($actor, (string) $row['patient_uuid'])) {
-                CF01_Authorization::clinician($actor, 'view_encounter');
-                CF01_Authorization::relationship((string) $row['patient_uuid'], $actor, 'clinical_care');
-            }
+            self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_encounter');
             CF01_Audit::access($actor, (string) $row['patient_uuid'], 'EncounterViewed', 'encounter', (string) $row['encounter_uuid'], 'clinical_care', 'success');
             return array('metadata' => self::safe_row($row), 'content' => CF01_Encounters::content($row));
         });
@@ -120,7 +156,13 @@ final class CF01_REST {
     public static function update_encounter(WP_REST_Request $request): WP_REST_Response {
         return self::mutate($request, 'UpdateEncounterDraft', function () use ($request): array {
             $data = self::json($request);
-            return CF01_Encounters::update_draft(get_current_user_id(), (string) $request['id'], (array) ($data['content'] ?? array()), sanitize_key((string) ($data['status'] ?? 'draft')), self::version($request, $data));
+            return CF01_Encounters::update_draft(
+                get_current_user_id(),
+                (string) $request['id'],
+                (array) ($data['content'] ?? array()),
+                sanitize_key((string) ($data['status'] ?? 'draft')),
+                self::version($request, $data)
+            );
         });
     }
 
@@ -146,6 +188,19 @@ final class CF01_REST {
         });
     }
 
+    public static function prescription(WP_REST_Request $request): WP_REST_Response {
+        return self::respond(function () use ($request): array {
+            $row = CF01_Prescriptions::get((string) $request['id']);
+            $actor = get_current_user_id();
+            $role = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_prescription');
+            if (!in_array('prescriptions', CF01_Authorization::fields($role, 'clinical_care', array('prescriptions'), $row), true)) {
+                throw new RuntimeException('Prescription access is unavailable.');
+            }
+            CF01_Audit::access($actor, (string) $row['patient_uuid'], 'PrescriptionViewed', 'prescription', (string) $row['prescription_uuid'], 'clinical_care', 'success');
+            return array('metadata' => self::safe_row($row), 'order' => CF01_Prescriptions::order($row));
+        });
+    }
+
     public static function sign_prescription(WP_REST_Request $request): WP_REST_Response {
         return self::mutate($request, 'SignPrescription', fn() => CF01_Prescriptions::sign(get_current_user_id(), (string) $request['id'], self::version($request, self::json($request))));
     }
@@ -161,6 +216,25 @@ final class CF01_REST {
         return self::mutate($request, 'PlanFollowUp', function () use ($request): array {
             $data = self::json($request);
             return CF01_Followups::plan(get_current_user_id(), (string) ($data['patient_uuid'] ?? ''), (string) ($data['prescription_uuid'] ?? ''), $data);
+        });
+    }
+
+    public static function followup(WP_REST_Request $request): WP_REST_Response {
+        return self::respond(function () use ($request): array {
+            $row = CF01_Followups::get((string) $request['id']);
+            $actor = get_current_user_id();
+            $role = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_followup');
+            if (!in_array('followups', CF01_Authorization::fields($role, 'clinical_care', array('followups'), $row), true)) {
+                throw new RuntimeException('Follow-up access is unavailable.');
+            }
+            $questionnaire = CF01_Crypto::decrypt((string) $row['questionnaire_cipher'], 'followup-questionnaire');
+            $plan = CF01_Crypto::decrypt((string) $row['plan_cipher'], 'followup-plan');
+            CF01_Audit::access($actor, (string) $row['patient_uuid'], 'FollowUpViewed', 'follow_up_plan', (string) $row['followup_uuid'], 'clinical_care', 'success');
+            return array(
+                'metadata' => self::safe_row($row),
+                'questionnaire' => is_array($questionnaire) ? $questionnaire : array(),
+                'plan' => is_array($plan) ? $plan : array(),
+            );
         });
     }
 
@@ -214,8 +288,6 @@ final class CF01_REST {
         return new WP_REST_Response(CF01_Health::report(get_current_user_id()), 200, self::private_headers());
     }
 
-
-
     private static function mutate(WP_REST_Request $request, string $command, callable $callback): WP_REST_Response {
         $key = trim((string) $request->get_header('Idempotency-Key'));
         $raw = (string) $request->get_body();
@@ -258,12 +330,24 @@ final class CF01_REST {
         return (int) $value;
     }
 
-    private static function requested_fields(WP_REST_Request $request): array {
+    private static function requested_fields(WP_REST_Request $request, array $defaults = array()): array {
         $value = $request->get_param('fields');
-        if (is_string($value)) {
+        if ($value === null || $value === '') {
+            $value = $defaults;
+        } elseif (is_string($value)) {
             $value = explode(',', $value);
         }
-        return array_values(array_filter(array_map('sanitize_key', (array) $value)));
+        return array_values(array_unique(array_filter(array_map('sanitize_key', (array) $value))));
+    }
+
+    private static function authorize_patient_read(int $actor_id, string $patient_uuid, string $doctor_action): string {
+        if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+            CF01_Authorization::actor($actor_id, 'view_own_clinical_record');
+            return 'patient';
+        }
+        CF01_Authorization::clinician($actor_id, $doctor_action);
+        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
+        return 'doctor';
     }
 
     private static function project_patient(string $patient_uuid, array $fields): array {
@@ -282,13 +366,7 @@ final class CF01_REST {
     }
 
     private static function timeline_rows(int $actor_id, string $patient_uuid, int $limit): array {
-        $role = CF01_Authorization::patient_owner($actor_id, $patient_uuid) ? 'patient' : 'doctor';
-        if ($role === 'doctor') {
-            CF01_Authorization::clinician($actor_id, 'view_clinical_timeline');
-            CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
-        } else {
-            CF01_Authorization::actor($actor_id, 'view_own_clinical_timeline');
-        }
+        self::authorize_patient_read($actor_id, $patient_uuid, 'view_clinical_timeline');
         $items = array();
         foreach (array('encounters' => 'encounter_uuid', 'prescriptions' => 'prescription_uuid', 'followups' => 'followup_uuid', 'outcomes' => 'outcome_uuid') as $key => $id_field) {
             $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY created_at DESC LIMIT ' . $limit, array($patient_uuid));
@@ -321,6 +399,12 @@ final class CF01_REST {
     }
 
     private static function private_headers(): array {
-        return array('Cache-Control' => 'no-store, private, max-age=0', 'Pragma' => 'no-cache', 'X-Robots-Tag' => 'noindex, nofollow, noarchive');
+        return array(
+            'Cache-Control' => 'no-store, private, max-age=0',
+            'Pragma' => 'no-cache',
+            'X-Robots-Tag' => 'noindex, nofollow, noarchive',
+            'Referrer-Policy' => 'no-referrer',
+            'X-Content-Type-Options' => 'nosniff',
+        );
     }
 }
