@@ -66,6 +66,7 @@ required = [
     "tests/unit.php", "tests/runtime-adversarial.php", "tests/static-audit.php",
     "tests/migration-review.php", "tests/fresh-review.php", "tests/security-corrections.php",
     "tests/three-plan-corrections.php", "tests/adversarial-round3.php", "tests/adversarial-round4.php",
+    "tests/adversarial-round4-compensation.php",
 ]
 for rel in required:
     if not (ROOT / rel).is_file():
@@ -78,8 +79,8 @@ for number in range(1, 33):
         errors.append(f"{req} must appear exactly once in structured traceability")
 
 php_files = sorted((ROOT / "sabri-clinical-records").rglob("*.php")) + sorted((ROOT / "tests").glob("*.php"))
-if len(php_files) != 34:
-    errors.append(f"Expected 34 permanent PHP files, found {len(php_files)}")
+if len(php_files) != 35:
+    errors.append(f"Expected 35 permanent PHP files, found {len(php_files)}")
 
 plugin_php = sorted((ROOT / 'sabri-clinical-records').rglob('*.php'))
 source = '\n'.join(path.read_text(encoding='utf-8') for path in plugin_php)
@@ -92,6 +93,7 @@ for token in ["CF01-FR-001", "CF01-FR-032"]:
 for token in [
     "validate_native_owner_contracts", "compensate_activation", "extract_file08_batch",
     "rollback_migration", "Migration batch identity was replayed with different content",
+    "ledger_migration_uuid", "Legacy rollback is blocked while the clinical runtime is active",
 ]:
     if token not in source:
         errors.append(f"Round-4 release invariant missing: {token}")
