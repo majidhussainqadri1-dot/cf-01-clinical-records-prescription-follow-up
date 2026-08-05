@@ -1,125 +1,87 @@
-# C1-A Evidence Manifest
+# CF-01 Governance and Source Evidence Manifest
 
-**Manifest version:** 1.0  
+**Manifest version:** 2.0  
 **Repository:** `majidhussainqadri1-dot/cf-01-clinical-records-prescription-follow-up`  
-**Branch:** `codex/cf-01-c1-a-foundation`  
-**Validated baseline head:** `7f2e7a76ea4a2b05be2e9a4bde8ed904c5899342`  
-**Validated pull-request merge ref:** `b0d8ab9f166f030b8ea374ed41bbe05fdd69ba2f`  
-**Validation run:** GitHub Actions `30816797726`  
-**Validation job:** `91696432332`  
-**Result:** 14/14 unit tests passed; public C1-A repository validation passed.
+**Governing source authority:** `CF01-CCR-2026-08-06-003`  
+**Truth boundary:** committed documents do not embed a self-referential final SHA, workflow run or package checksum. Exact immutable release evidence belongs in the final pull-request record after the last content commit.
 
-## 1. Truthful status
+## 1. Evidence law
 
-| Status class | Current evidence-backed state |
+1. A statement is accepted only at the evidence level actually proved.
+2. Governance documents prove specification and decision boundaries, not runtime behavior.
+3. Source and tests may prove `Coded` and `Automated-QA Green` within their tested scope.
+4. A deterministic artifact plus checksum may prove `Packaged`.
+5. None of those prove `Staging-Accepted`, `Live-Deployed` or `Operational`.
+6. Exact pull-request head and pull-request merge ref are separate required test surfaces.
+7. Missing, stale, revoked, wrong-environment or wrong-release native-owner evidence fails closed.
+8. New legal, clinical, provider, security or architecture evidence reopens review.
+
+## 2. Truthful status
+
+| Status class | Evidence-backed state |
 |---|---|
-| Specified | Governing CF-01 master plan and public C1-A architecture/governance package exist |
-| C1-A documentation/governance code | Present on controlled branch and reviewed in repeated correction cycles |
-| Automated QA | Green for the public-repository and traceability scope stated in this manifest |
+| Specified | Complete governing plan, C1-A governance package and 32-requirement traceability exist |
+| Coded | Reviewable disabled-by-default runtime candidate exists under Founder source authority |
+| Packaged | Deterministic package gate exists; exact checksum is PR-owned final evidence |
+| Automated-QA Green | Claimed only for the exact head and run recorded after final CI success |
 | Qualified legal/professional accepted | No |
-| Companion contracts frozen | No |
-| Clinical runtime coded | No; prohibited before C1-A exit |
-| Installable package | No |
-| Staging-Accepted | No |
-| Live-Deployed | No |
+| Native-owner contracts frozen | No; owner repositories must independently accept and merge compatible contracts |
+| Hostinger staging accepted | No |
+| Live deployed | No |
 | Operational | No |
+| Real patient-data authorized | No |
 
-Automated QA proves only the defined public-safe repository controls and document-traceability checks. It does not prove legal compliance, clinical correctness, production security or runtime completion.
+## 3. Governance evidence
 
-## 2. Governing and control evidence
+- `CHANGE_CONTROL.md` records the C1-A foundation, final governance hardening and source-runtime authorization.
+- `SECURITY.md` defines public-repository disclosure and sensitive-artifact law.
+- `docs/C1-A-FOUNDATION.md` defines architecture, trust boundaries, roles and threat model.
+- `docs/C1-A-CROSS-FILE-CONTRACTS.md` defines canonical owners, contracts and freeze criteria.
+- `docs/C1-A-CROSS-REPOSITORY-CONTRACT-TRACKING.md` records native-owner implementation and acceptance state.
+- legal/professional, retention/legal-hold, cryptography/storage, operational-ownership and independent-review registers preserve unresolved external decisions.
+- `docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` maps every `CF01-FR-001` through `CF01-FR-032` requirement to one implementation phase.
 
-| Evidence | Purpose | Current status |
-|---|---|---|
-| `README.md` | canonical scope, boundaries, activation law, phases and truthful state | Reviewed baseline |
-| `CHANGE_CONTROL.md` | C1-A authorization, prohibited runtime and change law | Reviewed baseline |
-| `SECURITY.md` | public-repository security/disclosure and sensitive-artifact rules | Reviewed baseline |
-| `.github/workflows/governance.yml` | automated test and repository-policy execution | Green on validated baseline |
-| `.gitignore` | generated/local sensitive-pattern exclusions | Present |
+## 4. Runtime evidence surfaces
 
-## 3. Architecture and governance evidence
+- `sabri-clinical-records/` — disabled-by-default WordPress source candidate.
+- `docs/REQUIREMENTS-TRACEABILITY.md` — one structured runtime mapping for every `CF01-FR-001` through `CF01-FR-032`.
+- `docs/SECURITY-PRIVACY-ARCHITECTURE.md` — native enforcement, encryption, authorization, audit and privacy boundaries.
+- `docs/MIGRATION-ROLLBACK.md` — disabled-state extraction, reconciliation, compensation and rollback law.
+- `docs/REVIEWS-40-CORRECTION-REGISTER.md` — review/fix lineage.
+- `tools/validate_repository.py` — unified public-safety, governance, workflow and traceability gate.
+- `tools/validate_runtime.py` — runtime surface and requirement gate.
+- PHP unit, adversarial, static, migration, fresh and security-correction suites.
+- deterministic packaging and source/package parity checks.
 
-| Evidence | Coverage | Current status |
-|---|---|---|
-| `docs/C1-A-FOUNDATION.md` | architecture, trust boundaries, data flow, roles, authorization, states and threat model | In review; external acceptance pending |
-| `docs/C1-A-CROSS-FILE-CONTRACTS.md` | owner boundaries and versioned assertion/event/query/command baseline | Drafted; companion-owner acceptance blocked |
-| `docs/C1-A-LEGAL-PROFESSIONAL-APPLICABILITY-REGISTER.md` | jurisdiction/service-mode qualified-review structure | Structure complete; qualified decisions blocked |
-| `docs/C1-A-RETENTION-LEGAL-HOLD-MATRIX.md` | category lifecycle, hold, disposal, provider and backup reconciliation | Structure complete; durations/formulas blocked |
-| `docs/C1-A-CRYPTOGRAPHY-STORAGE-ATTACHMENT-SECURITY.md` | keys, encryption, quarantine, scanning, delivery, recovery and provider exit | Architecture proposed; provider/proof blocked |
-| `docs/C1-A-OPERATIONAL-OWNERSHIP-AND-ESCALATION.md` | RACI, separation of duties, severity, coverage and escalation | Structure complete; assignees/deputies blocked |
-| `docs/C1-A-INDEPENDENT-REVIEW-PLAN.md` | legal, clinical, security, privacy, accessibility and resilience assessment | Plan drafted; assessors/reports blocked |
-| `docs/C1-A-REQUIREMENTS-TRACEABILITY.md` | C1-A requirements, owners, evidence and blocker state | Reconciled |
-| `docs/C1-B-TO-C1-H-IMPLEMENTATION-TRACEABILITY.md` | CF01-FR-001–032 mapping, tests, migration, rollout and DoD | Internally specified; all runtime phases blocked |
+## 5. Source authorization boundary
 
-## 4. Automated control evidence
+Founder Change-Control authorizes repository source integration through the reviewed candidate phases. It does not authorize:
 
-| Evidence | Control purpose | Validated result |
-|---|---|---|
-| `tools/validate_repository.py` | blocks sensitive/runtime/binary/indirect artifacts; requires governance package and semantic/phase coverage | Passed |
-| `tests/test_validate_repository.py` | adversarial fixtures for policy and traceability failures | 14/14 passed |
+- installation or activation on a live or staging site;
+- clinical schema installation against real infrastructure;
+- File 08 production extraction;
+- real patient, guardian or clinician data;
+- real clinical attachments or provider credentials;
+- claims of certification, legal compliance, clinical acceptance or production readiness.
 
-The validator currently proves, within its stated scope:
+The plugin must remain `disabled` by default. Schema installation and runtime enablement require separate explicit evidence and approval.
 
-- required governance files and semantic markers are present;
-- CF01-FR-001 through CF01-FR-032 are mapped in future-phase tables;
-- all C1-B through C1-H phase headings exist exactly once;
-- secrets/private-key patterns, database dumps and prohibited binary/data artifacts are rejected;
-- PHP/browser runtime files and extensionless PHP/Node-style runtime are rejected during C1-A;
-- symlinks, Git LFS indirection and submodules are rejected;
-- sensitive path variants and composite names are rejected;
-- Python is limited to governance tools/tests;
-- repository source validates without generated-bytecode false positives.
+## 6. External phase-exit blockers
 
-## 5. Review-and-correction lineage
-
-### Foundation review cycle
-
-- corrected secret-scanner self-detection;
-- blocked nested runtime, binary/office/archive/media artifacts and symlinks;
-- corrected generated Python bytecode ordering behavior.
-
-### Governance batch review cycle
-
-- blocked extensionless runtime and punctuation/composite sensitive-path variants;
-- removed bearer deep-link authorization ambiguity;
-- prohibited durable plaintext quarantine;
-- blocked Git LFS and submodule indirection.
-
-### Future-phase traceability review cycle
-
-- corrected weak requirement coverage based on mere identifier presence;
-- required every CF01-FR-001–032 identifier to appear as a phase-table mapping;
-- required exactly one C1-B through C1-H phase heading;
-- added negative tests for missing requirement mapping and missing phase heading.
-
-## 6. Remaining C1-A exit blockers
-
-The following are deliberately not claimed complete:
-
-1. qualified Pakistan and target-jurisdiction legal/professional decisions;
-2. approved category-specific retention durations/formulas and hold rules;
-3. File 00/02, 03/07/09, 08, 17, 19, 20/25 and 24 owner-frozen contracts and tests;
-4. provider/region/key/storage selection and private architecture evidence;
-5. BIA-approved RPO/RTO, key recovery, backup/restore and ransomware exercises;
-6. named operational owners, deputies, coverage, training and conflicts review;
-7. named independent assessors, engagement execution, reports and retests;
-8. executable C1-B–C1-H test IDs and runtime implementation evidence;
-9. Founder approval of the final versioned C1-A package and explicit authorization to enter C1-B.
+1. Qualified Pakistan and target-jurisdiction legal/professional decisions.
+2. Approved retention formulas, legal holds, patient-rights and breach duties.
+3. Owner-frozen File 00/02/08/09/17/19/20/25/24 and secure-delivery contracts.
+4. Provider, region, storage, key-management, RPO/RTO and recovery decisions.
+5. Independent clinical, privacy, security, accessibility and resilience reviews with retests.
+6. Hostinger-equivalent isolated staging with synthetic data.
+7. Migration, reconciliation, backup/restore and rollback drills.
+8. Representative browser/device/RTL/accessibility/load/failure acceptance.
+9. Named operational owners, deputies, coverage, training and runbooks.
+10. Explicit Founder production approval supported by immutable evidence.
 
 ## 7. Phase-exit decision
 
-**C1-A exit status:** `BLOCKED`  
-**C1-B runtime authorization:** `NOT GRANTED`  
-**Reason:** external qualified evidence, companion-owner acceptance, operational assignments and Founder phase-exit approval remain incomplete.
-
-## 8. Founder approval record
-
-| Field | Value |
-|---|---|
-| Evidence package version | Pending final C1-A package approval |
-| Approved exact SHA | Pending |
-| Decision | Pending |
-| Conditions / time-bound risk acceptance | Pending |
-| Approval date/time | Pending |
-| Founder signature/reference | Pending |
-
-No blank field in this section may be interpreted as approval.
+**Repository source integration:** authorized subject to exact-head and merge-ref gates.  
+**Runtime activation:** blocked.  
+**Real patient data:** prohibited.  
+**Staging, live and operational completion:** not claimed.
