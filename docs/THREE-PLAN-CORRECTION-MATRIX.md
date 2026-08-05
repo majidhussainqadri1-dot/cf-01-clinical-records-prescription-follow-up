@@ -10,19 +10,23 @@ CF-01 is reviewed against three concurrent governing sources:
 
 The newer explicit Founder directive supersedes older conflicting visual rules. CF-01 remains conditional, disabled by default and prohibited from handling real patient data until every external activation gate is independently accepted.
 
-## Current canonical source identity
+## Immutable reviewed implementation release baseline
 
-- Canonical branch: `main`
-- Exact reviewed main head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+The evidence below identifies the implementation/package release that was examined during the fresh four-round review. It is deliberately not described as the forever-current `main` tip: later documentation-only merges create new Git commit IDs without changing the reviewed installable runtime.
+
+- Source branch at implementation-release review: `main`
+- Exact reviewed implementation head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
 - Runtime / schema / contract: `1.0.0 / 1.0.0 / 1.0.0`
 - Exact-head GitHub Actions run: `31042006210` — successful
 - Retained release artifact: `8944933830`
 - Artifact name: `cf-01-release-5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
 - Artifact archive digest: `sha256:47122c85cfb0472ff2c3f3958291dea7c65677253f4f063ef7cbf0d429964218`
 
+The exact head and successful workflow for each later review/documentation commit belong to GitHub Actions and pull-request evidence. A committed document must not make the self-referential claim that it contains the immutable SHA of its own future merge commit.
+
 ## Truthful status law
 
-`Specified`, `Coded`, `Packaged`, `Automated-QA Green`, `Staging-Accepted`, `Live-Deployed` and `Operational` are separate states. Current evidence establishes the first four states within the reviewed source scope. It does not establish legal approval, independent penetration-test acceptance, Hostinger staging acceptance, live deployment or operational acceptance.
+`Specified`, `Coded`, `Packaged`, `Automated-QA Green`, `Staging-Accepted`, `Live-Deployed` and `Operational` are separate states. The immutable implementation-release evidence establishes the first four states within the reviewed source scope. It does not establish legal approval, independent penetration-test acceptance, Hostinger staging acceptance, live deployment or operational acceptance.
 
 ## Consolidated correction register
 
@@ -42,7 +46,7 @@ The newer explicit Founder directive supersedes older conflicting visual rules. 
 | TPC-012 | Activation evidence must be structured, immutable, exact-head and independently verifiable | Earlier gate accepted merely non-empty evidence fields | R3 release/site/environment-bound evidence, replay denial, expiry, unique IDs and immutable enabled-state evidence | Corrected in source; independent external verification pending |
 | TPC-013 | File 00/02/08/09/17/19/20/24/25 and secure-media contracts must be accepted and frozen | Local fail-closed adapters cannot prove native-owner operational acceptance | Structured provider assertions and fail-closed validation implemented; native repositories must supply accepted evidence | External release blocker |
 | TPC-014 | Hostinger-equivalent staging, browser/RTL/accessibility, restore/rollback and penetration testing | Automated and synthetic evidence cannot establish real-environment acceptance | No false completion claim; activation remains disabled and real data prohibited | External release blocker |
-| TPC-015 | Repository status documents must reflect current canonical evidence | Matrix, release-status and exact-head records retained obsolete “open/pending” source statements after R2–R4 and final merge | Updated together in the 06 August 2026 four-round fresh review | Corrected in documentation |
+| TPC-015 | Repository status documents must reflect accepted evidence without impossible self-reference | Matrix, release-status and exact-head records retained obsolete open/pending statements; initial correction wording could be mistaken for the forever-current main tip | Updated in the 06 August 2026 four-round review and finalized as immutable release-baseline evidence | Corrected in documentation |
 
 ## Current verdict
 
