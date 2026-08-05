@@ -1,18 +1,20 @@
 # CF-01 Exact-Head QA Record
 
-## Candidate identity
+## Reviewed implementation-release identity
 
 - Runtime: `Sabri Clinical Records 1.0.0`
-- Canonical branch: `main`
-- Exact reviewed head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Source branch at implementation review: `main`
+- Exact reviewed implementation head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
 - Scope: `CF01-FR-001` through `CF01-FR-032` and approved source-level cross-file contracts
 - Activation: disabled by default; real patient data prohibited until all external activation gates pass
+
+This record identifies the immutable runtime/package baseline. Later documentation-only commits may move the `main` tip without changing this reviewed installable package. Their exact-head and merge-ref results are retained by GitHub Actions and pull-request evidence rather than predicted inside a self-referential committed document.
 
 ## Exact GitHub Actions evidence
 
 - Workflow: `CF-01 Unified R1-R4 Governance and Runtime Gates`
-- Run ID: `31042006210`
-- Event: final `main` push
+- Implementation-release run ID: `31042006210`
+- Event: implementation-release `main` push
 - Conclusion: `success`
 
 Successful jobs:
@@ -24,19 +26,19 @@ Successful jobs:
 - Forty review and correction rounds — exact head
 - Policy, JavaScript and deterministic release bundle — exact head
 
-The pull-request merge-ref compatibility job is conditional on a pull-request event and was therefore correctly skipped on the final `main` push. It had already passed in the merged pull-request evidence.
+The pull-request merge-ref compatibility job is conditional on a pull-request event and was therefore correctly skipped on that `main` push. It passed in the merged pull-request evidence. Later review and documentation pull requests must independently pass both exact-head and merge-ref gates.
 
 ## Reviewed evidence totals
 
 - Functional requirements traced: `32/32`
-- Repository/public-safe inventory at final release review: `71` files
-- PHP source inventory at final release review: `35` files across repository tests and installable source
+- Repository/public-safe inventory at final implementation-release review: `71` files
+- PHP source inventory at final implementation-release review: `35` files across repository tests and installable source
 - PHP 8.1 R1–R4 clinical assertions: `393` passed
 - PHP 8.3 R1–R4 clinical assertions: `393` passed
 - Forty review cycles: `40/40` review pass and `40/40` correction-gate pass
 - Deterministic double-build comparison: byte-identical
 
-## Retained release evidence
+## Retained implementation-release evidence
 
 - Artifact ID: `8944933830`
 - Artifact name: `cf-01-release-5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
@@ -49,7 +51,7 @@ The retained bundle contains the installable ZIP, detached ZIP checksum, detache
 
 ## Truthful completion boundary
 
-This record establishes exact-head `Coded`, `Packaged` and `Automated-QA Green` evidence within the reviewed source scope. It does not establish:
+This record establishes exact-head `Coded`, `Packaged` and `Automated-QA Green` evidence within the reviewed implementation scope. It does not establish:
 
 - qualified legal or professional approval;
 - accepted native-owner operational contracts;
