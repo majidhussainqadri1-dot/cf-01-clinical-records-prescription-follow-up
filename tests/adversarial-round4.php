@@ -228,7 +228,7 @@ $expect(fn() => CF01_Release_Orchestrator::rollback_migration(1, (string) $migra
 add_filter('cf01_shell_route_registration', static fn($result, array $manifest): array => array(
     'contract_version' => '1.0.0', 'registered' => false, 'private' => true, 'no_store' => true,
 ), 999, 2);
-$expect(fn() => CF01_Release_Orchestrator::validate_native_owner_contracts($evidence, 1), 'A live File 20 registration outage must block activation.', 'File20');
+$expect(fn() => CF01_Release_Orchestrator::validate_native_owner_contracts($evidence, 1), 'A live File 20 registration outage must block activation.', 'file20_shell');
 
 if ($failures) {
     fwrite(STDERR, "CF-01 Round-4 adversarial review FAILED:\n- " . implode("\n- ", $failures) . "\n");
