@@ -133,7 +133,7 @@ Only an authorized clinician may move prescription states. No edit-in-place afte
 | CF01-FR-019 | clinician review and signed continue/change/stop/next-plan decision | Treating Lead | stale response, concurrent review and provenance tests |
 | CF01-FR-020 | canonical-reference longitudinal timeline with field filtering | Clinical Product / UX | stable pagination, restricted-field and patient-view tests |
 | CF01-FR-021 | deterministic, consented reminders and quiet hours without manipulation | Clinical Product / File 19 | opt-out, quiet-hours, dedupe, outage and false-delivery tests |
-| CF01-FR-030 notification part | explicit provider failure and retry/reconciliation | File 19 / Infrastructure | queued/recovered/no-duplicate delivery tests |
+| Cross-reference: CF01-FR-030 notification part | applies the canonical C1-C provider-failure requirement to notification retry/reconciliation | File 19 / Infrastructure | queued/recovered/no-duplicate delivery tests |
 
 ### 6.2 State machine
 
@@ -156,7 +156,7 @@ Patient submission never mutates diagnosis/prescription automatically. Notificat
 
 | Requirement | Implementation outcome | Primary owner | Required automated evidence |
 |---|---|---|---|
-| CF01-FR-022 completion | minimum-necessary field-level views for every role/state/purpose | Security / Privacy | complete matrix and API property-filter tests |
+| Cross-reference: CF01-FR-022 completion | completes the canonical C1-B authorization requirement with minimum-necessary role/state/purpose views | Security / Privacy | complete matrix and API property-filter tests |
 | CF01-FR-023 | privacy-approved patient access history with actor category/purpose/time/break-glass indicator | Privacy / Security | completeness/reconciliation and secret-masking tests |
 | CF01-FR-024 | correction, disagreement note, addendum or reasoned refusal; original preserved | Records / Clinical | no-silent-rewrite, timeline/export and appeal-route tests |
 | CF01-FR-025 | structured export/transfer, manifest/hashes, recent auth and expiring delivery | Records / Security | cross-patient, replay, bulk/rate, expiry and recipient tests |
