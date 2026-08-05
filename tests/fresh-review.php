@@ -7,7 +7,7 @@ $check = function (bool $condition, string $message) use (&$count, &$failures): 
 $files = array();
 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/sabri-clinical-records', FilesystemIterator::SKIP_DOTS));
 foreach ($iterator as $file) if ($file->isFile()) $files[] = $file->getPathname();
-$check(count(array_filter($files, fn($f) => str_ends_with($f, '.php'))) === 23, 'Unexpected plugin PHP inventory.');
+$check(count(array_filter($files, fn($f) => str_ends_with($f, '.php'))) === 24, 'Unexpected plugin PHP inventory.');
 $check(is_file($root . '/README.md'), 'README missing.');
 $check(is_file($root . '/docs/RELEASE-STATUS.md'), 'Release status missing.');
 $check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Staging-Accepted: pending'), 'Staging must not be falsely claimed.');
@@ -49,5 +49,10 @@ $retentionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-retention.p
 $check(str_contains($retentionSource, 'hold placer cannot release') && str_contains($retentionSource, 'approved_by_user_id'), 'Retention dual control missing.');
 $prescriptionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-prescriptions.php');
 $check(str_contains($prescriptionSource, 'PrescriptionSupersessionCompensated'), 'Supersession compensation missing.');
+
+$orchestrator = file_get_contents(CF01_DIR . 'includes/class-cf01-release-orchestrator.php');
+foreach (array('validate_native_owner_contracts', 'compensate_activation', 'extract_file08_batch', 'rollback_migration') as $token) {
+    $check(str_contains($orchestrator, $token), 'Round-4 release orchestration invariant missing: ' . $token);
+}
 
 echo "CF-01 fresh independent review: {$count} PASS, 0 FAIL\n";
