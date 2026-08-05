@@ -5,7 +5,7 @@
 **Scope:** source-level integration, activation, disabled-runtime migration and rollback controls.  
 **Truth boundary:** this record is automated source evidence only; it is not legal, clinical, penetration-test, Hostinger-staging, backup/restore or production acceptance.
 
-The exact immutable final head, workflow run and package checksum are recorded in the pull-request evidence after the final content commit. This committed document deliberately avoids claiming its own commit SHA or package checksum.
+The exact immutable final head, workflow run and package checksum are PR-owned release evidence and are recorded only after the final content commit. This committed document deliberately contains no exact-head or package claim.
 
 ## 1. Governing baselines
 
