@@ -8,6 +8,7 @@ NAME="cf-01-clinical-records-prescription-follow-up-${VERSION}"
 BUILD="${ROOT}/build"
 STAGE="${BUILD}/stage/sabri-clinical-records"
 ZIP="${BUILD}/${NAME}.zip"
+SBOM="${BUILD}/${NAME}.spdx.json"
 
 rm -rf "${BUILD}"
 mkdir -p "${STAGE}"
@@ -21,15 +22,26 @@ find "${STAGE}" -type f -print0 | xargs -0 touch -d "@${SOURCE_DATE_EPOCH}"
 touch -d "@${SOURCE_DATE_EPOCH}" "${STAGE}/MANIFEST.sha256"
 
 mkdir -p "${BUILD}"
+python3 "${ROOT}/tools/generate_sbom.py" \
+  --root "${STAGE}" \
+  --name "${NAME}" \
+  --version "${VERSION}" \
+  --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+  --output "${SBOM}"
+
 (
   cd "${BUILD}/stage"
   find sabri-clinical-records -type f -print | LC_ALL=C sort | zip -X -q "${ZIP}" -@
 )
 sha256sum "${ZIP}" > "${ZIP}.sha256"
+sha256sum "${SBOM}" > "${SBOM}.sha256"
 (
   cd "${STAGE}"
   sha256sum -c MANIFEST.sha256 >/dev/null
 )
 cp "${STAGE}/MANIFEST.sha256" "${BUILD}/${NAME}.manifest.sha256"
 rm -rf "${BUILD}/stage"
-printf 'Built %s\nSHA-256 %s\n' "$(basename "${ZIP}")" "$(sha256sum "${ZIP}" | awk '{print $1}')"
+printf 'Built %s\nZIP SHA-256 %s\nSBOM SHA-256 %s\n' \
+  "$(basename "${ZIP}")" \
+  "$(sha256sum "${ZIP}" | awk '{print $1}')" \
+  "$(sha256sum "${SBOM}" | awk '{print $1}')"
