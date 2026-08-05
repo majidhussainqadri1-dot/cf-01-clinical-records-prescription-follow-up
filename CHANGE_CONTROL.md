@@ -49,3 +49,32 @@ Every substantive batch must undergo:
 1. comprehensive review, defect correction and retesting;
 2. a separate fresh/adversarial review, further correction and retesting;
 3. truthful recording of unresolved risks before any phase promotion.
+
+---
+
+## CF01-CCR-2026-08-05-002 — Final C1-A Review, Correction and Merge-Readiness Hardening
+
+| Field | Decision |
+|---|---|
+| Requested by | Founder — Dr. Allamah Majid Hussain Sabri |
+| Request evidence | Explicit approval on 05 August 2026 to perform the final review, correct all identified defects and complete PR #1 merge-readiness |
+| Approved scope | PR #1 governance documents, evidence integrity, cross-repository status reconciliation, repository validator, tests, workflow supply-chain hardening and truthful PR metadata |
+| Explicit exclusion | No clinical runtime, WordPress plugin activation, patient tables, real data, File 08 extraction, clinical attachments, provider credentials, staging or production authorization |
+| Merge decision boundary | PR #1 may be marked ready for review after exact-head and merge-ref gates are green; merge records governance baseline only and does not grant C1-A phase exit or C1-B authority |
+| Required evidence | Final correction register, current cross-repository status, hardened workflow, expanded negative tests, successful exact-head checks, successful merge-ref compatibility and current PR body |
+| Rollback | Revert the final-hardening commits; no clinical or irreversible data state exists |
+
+### Corrective objectives
+
+1. Remove stale or self-referential SHA/run claims from committed evidence.
+2. Require every declared C1-A governance/evidence document in automated validation.
+3. Reject duplicate requirement mappings and hidden generated/dependency trees.
+4. Reject split sensitive-path variants.
+5. Pin GitHub Actions to exact commits, use a fixed runner and disable persisted checkout credentials.
+6. Test exact pull-request head and pull-request merge ref as separate evidence surfaces.
+7. Reconcile File 00 provider status after PR #13 merge without falsely declaring the contract accepted or frozen.
+8. Preserve every external legal, clinical, privacy, security, retention, operational and Founder phase-exit blocker.
+
+### Completion rule
+
+This change-control record is complete only when the corrected final head has no known repository-correctable defect, all mandatory CI jobs pass, the PR summary matches the tested head, and PR #1 is ready for review while remaining explicitly blocked from clinical runtime authorization.
