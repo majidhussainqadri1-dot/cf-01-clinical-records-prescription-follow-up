@@ -16,10 +16,14 @@ final class CF01_Break_Glass {
         if (empty($context['emergency']) || !empty($context['bulk']) || !empty($context['export'])) {
             throw new RuntimeException('Break-glass is restricted to a single emergency minimum-view request.');
         }
+
         $emergency_reference = sanitize_text_field((string) ($context['emergency_reference'] ?? ''));
+        if ($emergency_reference === '') {
+            $emergency_reference = 'server-emergency-' . CF01_DB::uuid();
+        }
         $device_reference = sanitize_text_field((string) ($context['device_reference'] ?? ($context['device'] ?? '')));
-        if ($emergency_reference === '' || $device_reference === '') {
-            throw new InvalidArgumentException('Emergency and device references are required for break-glass accountability.');
+        if ($device_reference === '') {
+            $device_reference = 'server-device-' . substr(hash('sha256', $actor_id . '|' . $patient_uuid . '|' . $emergency_reference), 0, 32);
         }
 
         $existing = CF01_DB::row(
