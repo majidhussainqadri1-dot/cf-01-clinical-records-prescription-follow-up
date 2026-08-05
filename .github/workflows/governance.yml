@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-      - name: Run syntax and eight review suites
+      - name: Run syntax and nine review suites
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD:/app" -w /app "php:${{ matrix.php }}-cli" sh -lc '
@@ -38,6 +38,7 @@ jobs:
             php tests/security-corrections.php
             php tests/three-plan-corrections.php
             php tests/adversarial-round3.php
+            php tests/adversarial-round4.php
           '
 
   forty-round-review:
@@ -57,6 +58,7 @@ jobs:
           python3 tools/run_40_reviews.py
           php tests/three-plan-corrections.php
           php tests/adversarial-round3.php
+          php tests/adversarial-round4.php
 
   policy-package-review:
     name: Policy, JavaScript and deterministic package review
@@ -76,6 +78,7 @@ jobs:
           php tests/security-corrections.php
           php tests/three-plan-corrections.php
           php tests/adversarial-round3.php
+          php tests/adversarial-round4.php
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/validate_runtime.py .
           git diff --check
