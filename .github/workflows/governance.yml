@@ -135,6 +135,7 @@ jobs:
           cp -a build/. /tmp/cf01-first-release/
           bash tools/package.sh
           diff -qr /tmp/cf01-first-release build
+          cmp -s /tmp/cf01-first-release/cf-01-clinical-records-prescription-follow-up-1.0.0.zip build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
           unzip -t build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip >/dev/null
           test "$(unzip -Z1 build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | cut -d/ -f1 | sort -u)" = "sabri-clinical-records"
           test -s build/cf-01-clinical-records-prescription-follow-up-1.0.0.manifest.sha256
