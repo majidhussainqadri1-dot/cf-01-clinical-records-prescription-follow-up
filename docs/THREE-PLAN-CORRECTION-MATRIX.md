@@ -2,37 +2,50 @@
 
 ## Governing baselines
 
-This corrective branch is reviewed against three concurrent governing sources:
+CF-01 is reviewed against three concurrent governing sources:
 
-1. `01-Sabri-Social-Homeopathy-Platform-Definitive-Master-Plan-2026-v3.0` — parent product constitution and truthful completion law.
-2. `Sabri-Platform-All-Chats-Recovered-Directives-Final-5-8-2026-Updated-v2.1` — later Founder-approved consolidated directives, including green identity, meaningful icons, RTL-first layout, Back/Home controls and global harmonization.
-3. `CF-01-Clinical-Records-Prescription-Follow-Up-Conditional-Complete-Master-Plan-2026-v1.0` — conditional clinical system-of-record specification.
+1. `01-Sabri-Social-Homeopathy-Platform-Definitive-Master-Plan-2026-v3.0` — parent product constitution, canonical ownership and truthful completion law.
+2. `Sabri-Platform-All-Chats-Recovered-Directives-Final-5-8-2026-Updated-v2.1` — later Founder-approved consolidated directives, including green identity, meaningful icons, RTL-first layout, Back/Home controls and post-GitHub harmonization.
+3. `CF-01-Clinical-Records-Prescription-Follow-Up-Conditional-Complete-Master-Plan-2026-v1.0` — conditional clinical system-of-record specification and `CF01-FR-001` through `CF01-FR-032`.
 
 The newer explicit Founder directive supersedes older conflicting visual rules. CF-01 remains conditional, disabled by default and prohibited from handling real patient data until every external activation gate is independently accepted.
 
+## Current canonical source identity
+
+- Canonical branch: `main`
+- Exact reviewed main head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Runtime / schema / contract: `1.0.0 / 1.0.0 / 1.0.0`
+- Exact-head GitHub Actions run: `31042006210` — successful
+- Retained release artifact: `8944933830`
+- Artifact name: `cf-01-release-5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Artifact archive digest: `sha256:47122c85cfb0472ff2c3f3958291dea7c65677253f4f063ef7cbf0d429964218`
+
 ## Truthful status law
 
-`Specified`, `Coded`, `Packaged`, `Automated-QA Green`, `Staging-Accepted`, `Live-Deployed` and `Operational` are separate states. This branch may establish corrected source and automated evidence only. It does not establish legal approval, independent penetration-test acceptance, Hostinger staging acceptance, live deployment or operations.
+`Specified`, `Coded`, `Packaged`, `Automated-QA Green`, `Staging-Accepted`, `Live-Deployed` and `Operational` are separate states. Current evidence establishes the first four states within the reviewed source scope. It does not establish legal approval, independent penetration-test acceptance, Hostinger staging acceptance, live deployment or operational acceptance.
 
-## Correction register
+## Consolidated correction register
 
-| ID | Governing requirement | Prior defect | R1 correction evidence | Current status |
+| ID | Governing requirement | Defect found during review | Correction evidence | Current status |
 |---|---|---|---|---|
-| TPC-001 | Green is the primary platform identity; other colors remain semantic | CF-01 hard-coded an orange primary token | `assets/css/clinical.css` now consumes shared Sabri tokens with approved green fallback and no orange primary token | Corrected in source; visual staging pending |
-| TPC-002 | Important actions use meaningful icons with accessible labels | Back/Home, retry and record actions had no icon system | Inline SVG icon factory plus visible bilingual labels; no external icon dependency | Corrected in source; screen-reader acceptance pending |
-| TPC-003 | Internal pages expose shared RTL-aware Back and Home controls | Clinical views had no common navigation controls | Safe same-origin Back behavior, deterministic clinical fallback and canonical Home control | Corrected in source; File 20 component contract pending |
-| TPC-004 | CF-01 must provide real protected patient/doctor views, not a placeholder-only shell | Every non-governance route displayed the same placeholder | Route-aware own-record, patient, encounter, prescription and follow-up renderers | Partially corrected; mutation/editor journeys remain |
-| TPC-005 | Patient can securely view own eligible chart | `/my-health-record/` had no server contract resolving the current patient | `GET /clinical/v1/me` plus blind-index canonical subject resolver and access audit | Corrected in source; integration staging pending |
-| TPC-006 | Prescription and follow-up routes require object, purpose and current relationship authorization | UI routes existed without corresponding read APIs | Protected GET contracts with patient-owner/treating-doctor checks, field policy and audit | Corrected in source; guardian/supervisor roles pending |
-| TPC-007 | No clinical data persists in browser storage | Placeholder code was safe but regression was not tied to the later plan | Permanent test blocks localStorage, sessionStorage, IndexedDB, service worker and cookies | Corrected and regression-gated |
+| TPC-001 | Green is the primary platform identity; other colors remain semantic | CF-01 previously hard-coded an orange primary token | `assets/css/clinical.css` consumes shared Sabri tokens with approved green fallback and no orange primary token | Corrected; visual staging acceptance pending |
+| TPC-002 | Important actions use meaningful icons with accessible labels | Back/Home, retry and record actions lacked a governed icon system | Inline SVG icon factory plus visible bilingual labels; no external icon dependency | Corrected; representative screen-reader acceptance pending |
+| TPC-003 | Internal pages expose shared RTL-aware Back and Home controls | Clinical views lacked common navigation controls | Safe same-origin Back behavior, deterministic clinical fallback and canonical Home control | Corrected in source; native File 20 staging contract pending |
+| TPC-004 | CF-01 must provide protected patient/doctor views, not a placeholder-only shell | Every non-governance route previously displayed the same placeholder | Route-aware own-record, patient, encounter, prescription and follow-up renderers plus lifecycle actions | Corrected in source |
+| TPC-005 | Patient can securely view own eligible chart | `/my-health-record/` lacked a current-patient resolution contract | `GET /clinical/v1/me`, blind-index subject resolver and access audit | Corrected in source; integration staging pending |
+| TPC-006 | Prescription and follow-up routes require object, purpose and current relationship authorization | UI routes lacked complete protected read contracts | Protected REST contracts with patient-owner/treating-clinician checks, field policy and audit | Corrected in source |
+| TPC-007 | No clinical data persists in browser storage | Regression protection was not bound to the later plan | Permanent tests prohibit `localStorage`, `sessionStorage`, IndexedDB, service workers and cookies for clinical data | Corrected and regression-gated |
 | TPC-008 | Clinical UI must avoid unsafe HTML injection | No permanent plan-specific assertion | DOM-only rendering and permanent `innerHTML` prohibition test | Corrected and regression-gated |
-| TPC-009 | All later-plan corrections must remain in exact-head CI | Existing suites did not explicitly enforce newer green/icon/navigation requirements | `tests/three-plan-corrections.php` runs on PHP 8.1, PHP 8.3, forty-round and package-policy jobs | Corrected in CI definition |
-| TPC-010 | Complete role journeys: patient, guardian, treating doctor, assistant, supervisor, records officer, auditor | Current read helper covers patient and treating doctor only | No false completion claim | Open — next correction batch |
-| TPC-011 | Complete clinical lifecycle UI and REST: relationships, consent withdrawal, observations, assessments, supersession, follow-up transitions, rights, retention and break-glass review | Domain methods exist unevenly; public/internal route coverage is incomplete | No false completion claim | Open — next correction batch |
-| TPC-012 | Activation evidence must be structured, immutable, exact-head and independently verifiable | Existing activation gate accepts non-empty evidence fields | No false completion claim | Open — next correction batch |
-| TPC-013 | File 00/02/08/09/17/19/20/24/25 and secure-media contracts must be accepted and frozen | Current code has fail-closed adapters but no accepted native-owner evidence | No false completion claim | External blocker |
-| TPC-014 | Hostinger-equivalent staging, browsers, RTL, accessibility, restore, rollback and penetration testing | Automated/synthetic evidence only | No false completion claim | External blocker |
+| TPC-009 | Later-plan corrections must remain in exact-head CI | Earlier suites did not explicitly enforce green/icon/navigation requirements | `tests/three-plan-corrections.php` runs in PHP 8.1, PHP 8.3, forty-round and package-policy jobs | Corrected in CI |
+| TPC-010 | Complete role journeys: patient, guardian, treating doctor, assistant, supervisor, records officer and auditor | R1 covered patient and treating doctor only | R2 role-context, guardian, assistant, supervisor, records and auditor workflows plus adversarial tests | Corrected in source; representative human staging pending |
+| TPC-011 | Complete clinical lifecycle: relationships, consent withdrawal, observations, assessments, supersession, follow-up transitions, rights, retention and break-glass review | Initial runtime coverage was uneven | R2 lifecycle REST/domain completion and R3/R4 adversarial, compensation and rollback hardening | Corrected in source |
+| TPC-012 | Activation evidence must be structured, immutable, exact-head and independently verifiable | Earlier gate accepted merely non-empty evidence fields | R3 release/site/environment-bound evidence, replay denial, expiry, unique IDs and immutable enabled-state evidence | Corrected in source; independent external verification pending |
+| TPC-013 | File 00/02/08/09/17/19/20/24/25 and secure-media contracts must be accepted and frozen | Local fail-closed adapters cannot prove native-owner operational acceptance | Structured provider assertions and fail-closed validation implemented; native repositories must supply accepted evidence | External release blocker |
+| TPC-014 | Hostinger-equivalent staging, browser/RTL/accessibility, restore/rollback and penetration testing | Automated and synthetic evidence cannot establish real-environment acceptance | No false completion claim; activation remains disabled and real data prohibited | External release blocker |
+| TPC-015 | Repository status documents must reflect current canonical evidence | Matrix, release-status and exact-head records retained obsolete “open/pending” source statements after R2–R4 and final merge | Updated together in the 06 August 2026 four-round fresh review | Corrected in documentation |
 
-## Release boundary after R1
+## Current verdict
 
-R1 corrects the first visual and protected-read defects. It does **not** make CF-01 production complete. Real patient data remains prohibited. Runtime activation remains disabled by default. The branch must stay draft until all open Critical/High items and external activation gates are resolved.
+The three-plan source implementation is complete for all 32 Must requirements, deterministically packaged and exact-head automated-QA green. No known unresolved Critical or High defect remains in the presently reviewable source scope.
+
+This is not a claim of absolute infallibility and not a production-completion claim. CF-01 remains disabled by default. Real patient data, production schema installation, File 08 production extraction, provider credentials, Hostinger staging and live operation remain prohibited until the external release blockers and complete Definition of Done are independently accepted.
