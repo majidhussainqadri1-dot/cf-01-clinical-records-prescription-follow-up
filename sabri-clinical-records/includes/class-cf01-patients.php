@@ -95,6 +95,21 @@ final class CF01_Patients {
         return $row;
     }
 
+    public static function for_platform_subject(string $platform_uuid): array {
+        $platform_uuid = trim($platform_uuid);
+        if ($platform_uuid === '') {
+            throw new RuntimeException('Clinical record is unavailable.');
+        }
+        $row = CF01_DB::row(
+            'SELECT * FROM ' . CF01_DB::table('patients') . ' WHERE platform_subject_hash = %s AND status NOT IN (%s,%s) ORDER BY id DESC LIMIT 1',
+            array(CF01_Crypto::blind_index($platform_uuid, 'platform-subject'), 'merged', 'quarantined')
+        );
+        if (!$row) {
+            throw new RuntimeException('Clinical record is unavailable.');
+        }
+        return $row;
+    }
+
     public static function public_row(array $row): array {
         return array(
             'clinical_uuid' => (string) $row['clinical_uuid'],
