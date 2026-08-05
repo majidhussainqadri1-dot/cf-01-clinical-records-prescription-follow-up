@@ -173,7 +173,7 @@ MAPPED_FUNCTIONAL_REQUIREMENT_PATTERN = re.compile(
 )
 RUNTIME_REQUIREMENT_PATTERN = re.compile(r"(?m)^\|\s*(CF01-FR-\d{3})\b")
 PHASE_HEADING_PATTERN = re.compile(r"(?m)^##\s+\d+\.\s+(C1-[B-H])\b")
-ACTION_USE_PATTERN = re.compile(r"(?m)^\s*uses:\s+[^@\s]+@([^\s#]+)")
+ACTION_USE_PATTERN = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s+[^@\s]+@([^\s#]+)")
 EXACT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 MAX_TEXT_FILE_BYTES = 2_000_000
 
@@ -260,7 +260,6 @@ def validate(root: Path) -> list[str]:
     for path, relative in paths:
         relative_string = str(relative).replace("\\", "/")
         normalized_parts = {part.lower() for part in relative.parts}
-        compact_parts = {normalize_path_token(part) for part in relative.parts}
         compact_relative = normalize_path_token(relative_string)
         name_lower = path.name.lower()
         suffix_lower = path.suffix.lower()
