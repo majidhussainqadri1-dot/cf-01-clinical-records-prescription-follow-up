@@ -69,7 +69,7 @@ final class CF01_Role_Context {
             throw new RuntimeException('Verified guardian authority has expired.');
         }
         $scope = array_values(array_unique(array_map('sanitize_key', (array) ($guardian['scope'] ?? array()))));
-        if (!$scope || (!in_array($purpose, $scope, true) && !in_array('clinical_care', $scope, true))) {
+        if (!$scope || !in_array($purpose, $scope, true)) {
             throw new RuntimeException('Verified guardian scope does not authorize this clinical purpose.');
         }
 
@@ -172,7 +172,7 @@ final class CF01_Role_Context {
             || !hash_equals($actor_subject, (string) ($assertion['actor_platform_uuid'] ?? ''))
             || !hash_equals($patient_uuid, (string) ($assertion['patient_uuid'] ?? ''))
             || !hash_equals((string) $guardian['reference'], (string) ($assertion['guardian_reference'] ?? ''))
-            || (!$scopes || (!in_array($purpose, $scopes, true) && !in_array('clinical_care', $scopes, true)))
+            || (!$scopes || !in_array($purpose, $scopes, true))
             || empty($assertion['expires_at'])
             || !CF01_Authorization::not_expired((string) $assertion['expires_at'])
         ) {
