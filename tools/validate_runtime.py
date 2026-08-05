@@ -57,14 +57,15 @@ for path in files:
 required = [
     "README.md", "docs/REQUIREMENTS-TRACEABILITY.md", "docs/SECURITY-PRIVACY-ARCHITECTURE.md",
     "docs/MIGRATION-ROLLBACK.md", "docs/RELEASE-STATUS.md", "docs/REVIEWS-40-CORRECTION-REGISTER.md",
-    "docs/THREE-PLAN-CORRECTION-MATRIX.md", "docs/REVIEW-CORRECTION-R1.md",
+    "docs/THREE-PLAN-CORRECTION-MATRIX.md", "docs/REVIEW-CORRECTION-R1.md", "docs/REVIEW-CORRECTION-R4.md",
     "tools/package.sh", "tools/run_40_reviews.py",
     "sabri-clinical-records/sabri-clinical-records.php",
     "sabri-clinical-records/includes/class-cf01-authorization.php",
     "sabri-clinical-records/includes/class-cf01-migrations.php",
+    "sabri-clinical-records/includes/class-cf01-release-orchestrator.php",
     "tests/unit.php", "tests/runtime-adversarial.php", "tests/static-audit.php",
     "tests/migration-review.php", "tests/fresh-review.php", "tests/security-corrections.php",
-    "tests/three-plan-corrections.php", "tests/adversarial-round3.php",
+    "tests/three-plan-corrections.php", "tests/adversarial-round3.php", "tests/adversarial-round4.php",
 ]
 for rel in required:
     if not (ROOT / rel).is_file():
@@ -77,8 +78,8 @@ for number in range(1, 33):
         errors.append(f"{req} must appear exactly once in structured traceability")
 
 php_files = sorted((ROOT / "sabri-clinical-records").rglob("*.php")) + sorted((ROOT / "tests").glob("*.php"))
-if len(php_files) != 32:
-    errors.append(f"Expected 32 permanent PHP files, found {len(php_files)}")
+if len(php_files) != 34:
+    errors.append(f"Expected 34 permanent PHP files, found {len(php_files)}")
 
 plugin_php = sorted((ROOT / 'sabri-clinical-records').rglob('*.php'))
 source = '\n'.join(path.read_text(encoding='utf-8') for path in plugin_php)
@@ -88,6 +89,12 @@ for token in ["eval(", "shell_exec(", "passthru(", "permission_callback' => '__r
 for token in ["CF01-FR-001", "CF01-FR-032"]:
     if token not in trace:
         errors.append(f"Traceability boundary missing: {token}")
+for token in [
+    "validate_native_owner_contracts", "compensate_activation", "extract_file08_batch",
+    "rollback_migration", "Migration batch identity was replayed with different content",
+]:
+    if token not in source:
+        errors.append(f"Round-4 release invariant missing: {token}")
 
 if errors:
     print("CF-01 runtime policy validation FAILED", file=sys.stderr)
