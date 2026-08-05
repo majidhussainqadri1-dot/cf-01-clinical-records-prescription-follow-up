@@ -147,7 +147,8 @@ jobs:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_required_files(root)
-            (root / "bad.txt").write_text("patient_name = 'Example Person'\n", encoding="utf-8")
+            marker = "patient_" + "name = 'Example Person'\n"
+            (root / "bad.txt").write_text(marker, encoding="utf-8")
             self.assertTrue(any("identifying clinical fixture" in e for e in validate(root)))
 
     def test_symbolic_link_is_rejected(self) -> None:
