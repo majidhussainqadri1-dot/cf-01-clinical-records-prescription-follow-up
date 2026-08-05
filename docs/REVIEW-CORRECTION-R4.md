@@ -1,6 +1,6 @@
 # CF-01 Correction Round 4 — Integration Contracts, Activation Compensation and Rollback
 
-**Date:** 05 August 2026  
+**Date:** 05–06 August 2026  
 **Branch:** `codex/cf-01-three-plan-correction-r1`  
 **Scope:** source-level integration, activation, disabled-runtime migration and rollback controls.  
 **Truth boundary:** this record is automated source evidence only; it is not legal, clinical, penetration-test, Hostinger-staging, backup/restore or production acceptance.
@@ -13,7 +13,8 @@ This round continues reconciliation against:
 
 1. Definitive Integrated Master Plan v3.0;
 2. All-Chats Recovered Directive Register v2.1;
-3. CF-01 Clinical Records, Prescription and Follow-Up plan v1.0.
+3. CF-01 Clinical Records, Prescription and Follow-Up plan v1.0;
+4. the merged C1-A governance foundation and canonical disabled-by-default runtime on `main`.
 
 ## 2. Confirmed defects and corrections
 
@@ -77,24 +78,39 @@ The first fresh run exposed a stale plugin PHP inventory. A subsequent run showe
 
 **Correction:** inventory was reconciled to the actual source tree, the assertion was aligned with the canonical `file20_shell` error code, and all suites were rerun from a fresh exact head.
 
+### R4-D11 — Stacked correction branch was no longer based on canonical runtime
+
+After the C1-A governance foundation and complete disabled-by-default runtime reached canonical `main`, the R1–R4 branch retained its older stacked ancestry. Testing only that older ancestry would not prove compatibility with the actual canonical repository.
+
+**Correction:** canonical `main` was merged into the R1–R4 branch through a one-time fail-closed reconciliation workflow. Only the already-combined governance workflow was eligible for automatic conflict resolution; any other conflict would have aborted. The temporary workflow removed itself after success. The branch is now tested against the actual governance/runtime baseline.
+
+### R4-D12 — Earlier Round-4 workflow lacked the unified governance and merge-ref law
+
+The earlier workflow ran the ten PHP suites but did not preserve the later unified repository-policy matrix, separate exact-head checkout, and independent pull-request merge-ref compatibility gate.
+
+**Correction:** the final workflow combines both layers: Python 3.11/3.12 repository-policy review, exact pull-request head checkout, PHP 8.1/8.3 ten-suite review, forty-round review, deterministic package verification and a separate merge-ref compatibility job. Actions are pinned, checkout credentials are not persisted and the final package must be byte-identical across two builds.
+
 ## 3. Permanent executable evidence
 
 - `sabri-clinical-records/includes/class-cf01-release-orchestrator.php`
 - `tests/adversarial-round4.php`
 - `tests/adversarial-round4-compensation.php`
 - `.github/workflows/governance.yml`
+- `tools/validate_repository.py`
 - `tools/validate_runtime.py`
 
-Round 4 executes on PHP 8.1, PHP 8.3, the policy/package job and the forty-round correction gate.
+Round 4 executes on PHP 8.1, PHP 8.3, Python 3.11, Python 3.12, the policy/package job, the forty-round correction gate and the pull-request merge-ref gate.
 
 ## 4. Required final automated evidence
 
 The final exact head must pass:
 
+- Python 3.11 and Python 3.12 governance/repository-policy jobs;
 - PHP 8.1 and PHP 8.3 clinical review jobs;
 - forty review and correction rounds;
 - policy, JavaScript and deterministic-package review;
 - all ten PHP suites, including both Round-4 adversarial suites;
+- a separate pull-request merge-ref compatibility job;
 - repository-policy tests and runtime validator;
 - 32/32 functional requirement traceability;
 - two byte-identical package builds with one checksum recorded in immutable pull-request evidence.
@@ -121,4 +137,4 @@ The following remain unavailable and are not claimed by this source round:
 
 ## 7. Round decision
 
-Round 4 may be marked source-complete only after the final content head passes every required gate. Passing those gates does not promote the module to Staging-Accepted, Live-Deployed or Operational.
+Round 4 may be marked source-complete only after the final content head passes every required exact-head and merge-ref gate. Passing those gates may establish only `Coded`, `Packaged` and `Automated-QA Green` within the tested scope; it does not promote the module to Staging-Accepted, Live-Deployed or Operational.
