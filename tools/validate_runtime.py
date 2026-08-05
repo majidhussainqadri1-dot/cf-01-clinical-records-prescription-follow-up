@@ -64,7 +64,7 @@ required = [
     "sabri-clinical-records/includes/class-cf01-migrations.php",
     "tests/unit.php", "tests/runtime-adversarial.php", "tests/static-audit.php",
     "tests/migration-review.php", "tests/fresh-review.php", "tests/security-corrections.php",
-    "tests/three-plan-corrections.php",
+    "tests/three-plan-corrections.php", "tests/adversarial-round3.php",
 ]
 for rel in required:
     if not (ROOT / rel).is_file():
@@ -77,8 +77,8 @@ for number in range(1, 33):
         errors.append(f"{req} must appear exactly once in structured traceability")
 
 php_files = sorted((ROOT / "sabri-clinical-records").rglob("*.php")) + sorted((ROOT / "tests").glob("*.php"))
-if len(php_files) != 31:
-    errors.append(f"Expected 31 permanent PHP files, found {len(php_files)}")
+if len(php_files) != 32:
+    errors.append(f"Expected 32 permanent PHP files, found {len(php_files)}")
 
 plugin_php = sorted((ROOT / 'sabri-clinical-records').rglob('*.php'))
 source = '\n'.join(path.read_text(encoding='utf-8') for path in plugin_php)
