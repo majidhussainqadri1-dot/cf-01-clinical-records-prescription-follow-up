@@ -49,3 +49,58 @@ Every substantive batch must undergo:
 1. comprehensive review, defect correction and retesting;
 2. a separate fresh/adversarial review, further correction and retesting;
 3. truthful recording of unresolved risks before any phase promotion.
+
+---
+
+## CF01-CCR-2026-08-05-002 — Final C1-A Review, Correction and Merge-Readiness Hardening
+
+| Field | Decision |
+|---|---|
+| Requested by | Founder — Dr. Allamah Majid Hussain Sabri |
+| Request evidence | Explicit approval on 05 August 2026 to perform the final review, correct all identified defects and complete PR #1 merge-readiness |
+| Approved scope | PR #1 governance documents, evidence integrity, cross-repository status reconciliation, repository validator, tests, workflow supply-chain hardening and truthful PR metadata |
+| Explicit exclusion | No clinical runtime, WordPress plugin activation, patient tables, real data, File 08 extraction, clinical attachments, provider credentials, staging or production authorization |
+| Merge decision boundary | PR #1 may be marked ready for review after exact-head and merge-ref gates are green; merge records governance baseline only and does not grant C1-A phase exit or C1-B authority |
+| Required evidence | Final correction register, current cross-repository status, hardened workflow, expanded negative tests, successful exact-head checks, successful merge-ref compatibility and current PR body |
+| Rollback | Revert the final-hardening commits; no clinical or irreversible data state exists |
+
+### Corrective objectives
+
+1. Remove stale or self-referential SHA/run claims from committed evidence.
+2. Require every declared C1-A governance/evidence document in automated validation.
+3. Reject duplicate requirement mappings and hidden generated/dependency trees.
+4. Reject split sensitive-path variants.
+5. Pin GitHub Actions to exact commits, use a fixed runner and disable persisted checkout credentials.
+6. Test exact pull-request head and pull-request merge ref as separate evidence surfaces.
+7. Reconcile File 00 provider status after PR #13 merge without falsely declaring the contract accepted or frozen.
+8. Preserve every external legal, clinical, privacy, security, retention, operational and Founder phase-exit blocker.
+
+### Completion rule
+
+This change-control record is complete only when the corrected final head has no known repository-correctable defect, all mandatory CI jobs pass, the PR summary matches the tested head, and PR #1 is ready for review while remaining explicitly blocked from clinical runtime authorization.
+
+---
+
+## CF01-CCR-2026-08-06-003 — Authorize Source Runtime and Canonical Repository Integration
+
+| Field | Decision |
+|---|---|
+| Requested and approved by | Founder — Dr. Allamah Majid Hussain Sabri |
+| Request evidence | Explicit instruction on 06 August 2026 to complete, in one comprehensive pass, every task required for this file under the Manhaj-e-Sabri |
+| Approved scope | Merge the accepted C1-A governance baseline; reconcile and merge the complete disabled-by-default CF-01 source runtime; apply all R1–R4 corrective hardening; maintain full requirements traceability, deterministic packaging, exact-head and merge-ref QA, rollback controls and truthful release evidence |
+| Source authority | C1-B through C1-G source implementation and repository integration are authorized as reviewable code candidates |
+| Explicit exclusions | No activation on Hostinger or live WordPress, no real patient data, no real clinical attachments, no File 08 production extraction, no provider credentials, no production schema installation and no legal/compliance/clinical certification claim |
+| Runtime law | Plugin activation state remains `disabled`; schema installation requires an explicit separate gate; missing or stale native-owner contracts fail closed |
+| Merge law | Source may reach canonical `main` only in dependency order after exact-head and pull-request merge-ref gates pass; every correction must be retested before merge |
+| External activation gates | Qualified legal/professional acceptance, independent security testing, provider/region/key decisions, Hostinger-equivalent staging, browser/accessibility acceptance, backup/restore and rollback drills, named operations staff and explicit production approval remain mandatory |
+| Rollback | Revert the relevant merge commit(s); because activation and real-data use remain prohibited, repository rollback must not require clinical-data reversal |
+| Truthful status after source merge | Coded / Packaged / Automated-QA Green candidate only; not Staging-Accepted, not Live-Deployed and not Operational |
+
+### Manhaj-e-Sabri completion doctrine
+
+1. Plan and ownership reconciliation precede coding.
+2. Every confirmed defect is corrected in the same cycle.
+3. A fresh independent/adversarial review follows correction.
+4. Exact source head and pull-request merge compatibility are both mandatory evidence.
+5. No source, package or green CI result is represented as production completion.
+6. New evidence, law, provider change or architecture change reopens review without claiming absolute infallibility.
