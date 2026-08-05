@@ -37,6 +37,7 @@ SOURCES = {
     "rest": read("sabri-clinical-records/includes/class-cf01-rest.php"),
     "migrations": read("sabri-clinical-records/includes/class-cf01-migrations.php"),
     "package": read("tools/package.sh"),
+    "sbom": read("tools/generate_sbom.py"),
 }
 
 
@@ -83,9 +84,38 @@ def export_order() -> None:
 
 def workflow_matrix() -> None:
     source = SOURCES["workflow"]
-    for marker in ('php: ["8.1", "8.3"]', "Verify deterministic installable package", "cmp -s"):
+    markers = (
+        'php: ["8.1", "8.3"]',
+        "Verify deterministic ZIP manifest checksum and SPDX SBOM bundle",
+        "cmp -s",
+        "diff -qr",
+        ".spdx.json",
+        "Retain complete release evidence bundle",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        "merge-ref compatibility",
+    )
+    for marker in markers:
         if marker not in source:
             raise AssertionError(f"Workflow evidence is missing: {marker}")
+
+    package_markers = (
+        "tools/generate_sbom.py",
+        'sha256sum "${SBOM}"',
+        "MANIFEST.sha256",
+    )
+    for marker in package_markers:
+        if marker not in SOURCES["package"]:
+            raise AssertionError(f"Package evidence is missing: {marker}")
+
+    sbom_markers = (
+        '"SPDX-2.3"',
+        '"CC0-1.0"',
+        "packageVerificationCodeValue",
+        "SHA256",
+    )
+    for marker in sbom_markers:
+        if marker not in SOURCES["sbom"]:
+            raise AssertionError(f"SBOM evidence is missing: {marker}")
 
 
 @dataclass(frozen=True)
@@ -134,7 +164,7 @@ ROUNDS = [
     Round(36, "Export provider-before-consumption", export_order),
     Round(37, "Correction patient match and atomicity", contains("rights", "Correction case and encounter patient do not match.", "CF01_DB::transaction(function () use ($actor_id, $case_uuid")),
     Round(38, "Bounded non-truncating exports", contains("rights", "bounded_rows", "approved paginated export job")),
-    Round(39, "Dual-PHP and deterministic package", workflow_matrix),
+    Round(39, "Dual-PHP and deterministic retained release bundle", workflow_matrix),
     Round(40, "Integrated independent final review", contains("validator", "CF01-FR-032", "CF-01 runtime policy validation PASS")),
 ]
 

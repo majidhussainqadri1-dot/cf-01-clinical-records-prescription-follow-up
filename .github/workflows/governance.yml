@@ -102,7 +102,7 @@ jobs:
           git diff --check
 
   policy-package-exact-head:
-    name: Policy, JavaScript and deterministic package — exact head
+    name: Policy, JavaScript and deterministic release bundle — exact head
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -124,21 +124,52 @@ jobs:
           python3 tools/validate_repository.py .
           python3 tools/validate_runtime.py .
           git diff --check
-      - name: Verify deterministic installable package
+      - name: Verify deterministic ZIP manifest checksum and SPDX SBOM bundle
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq rsync zip unzip >/dev/null
           bash tools/package.sh
-          first_hash="$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | awk '{print $1}')"
-          cp build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip /tmp/cf01-first.zip
+          rm -rf /tmp/cf01-first-release
+          mkdir -p /tmp/cf01-first-release
+          cp -a build/. /tmp/cf01-first-release/
           bash tools/package.sh
-          second_hash="$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | awk '{print $1}')"
-          test "$first_hash" = "$second_hash"
-          cmp -s /tmp/cf01-first.zip build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
+          diff -qr /tmp/cf01-first-release build
+          cmp -s /tmp/cf01-first-release/cf-01-clinical-records-prescription-follow-up-1.0.0.zip build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
           unzip -t build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip >/dev/null
           test "$(unzip -Z1 build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | cut -d/ -f1 | sort -u)" = "sabri-clinical-records"
-          echo "package_sha256=${second_hash}"
+          test -s build/cf-01-clinical-records-prescription-follow-up-1.0.0.manifest.sha256
+          test -s build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json
+          sha256sum -c build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip.sha256
+          sha256sum -c build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json.sha256
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json")
+          document = json.loads(path.read_text(encoding="utf-8"))
+          assert document["spdxVersion"] == "SPDX-2.3"
+          assert document["dataLicense"] == "CC0-1.0"
+          assert document["SPDXID"] == "SPDXRef-DOCUMENT"
+          assert document["packages"][0]["filesAnalyzed"] is True
+          assert document["files"]
+          assert len(document["relationships"]) == len(document["files"]) + 1
+          PY
+          echo "zip_sha256=$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | awk '{print $1}')"
+          echo "sbom_sha256=$(sha256sum build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json | awk '{print $1}')"
+      - name: Retain complete release evidence bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cf-01-release-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
+            build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip.sha256
+            build/cf-01-clinical-records-prescription-follow-up-1.0.0.manifest.sha256
+            build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json
+            build/cf-01-clinical-records-prescription-follow-up-1.0.0.spdx.json.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
   merge-ref-compatibility:
     name: Governance and R1-R4 runtime merge-ref compatibility
