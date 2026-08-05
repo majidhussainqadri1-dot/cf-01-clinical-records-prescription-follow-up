@@ -1,15 +1,30 @@
 # CF-01 Release Status
 
-## Current source stage
+## Current canonical source stage
 
-- **Specified:** complete under the Definitive Master Plan, CF-01 conditional plan and merged C1-A governance baseline.
-- **Coded:** complete disabled-by-default runtime candidate for `CF01-FR-001` through `CF01-FR-032`.
-- **Governance integration:** the reviewed C1-A foundation, runtime and R1–R4 hardening are merged to canonical `main`.
-- **Packaged:** requires an exact-head deterministic double-build receipt for the ZIP, embedded file manifest, detached ZIP checksum, SPDX 2.3 SBOM and detached SBOM checksum, retained together as one GitHub Actions artifact.
-- **Automated-QA Green:** requires exact-head PHP 8.1/8.3, governance, runtime, forty-round, release-bundle and pull-request merge-ref evidence.
+- **Specified: complete** — Definitive Master Plan, All-Chats Directive Register v2.1, CF-01 conditional plan and merged C1-A governance baseline are traced.
+- **Coded: complete within the approved source scope** — disabled-by-default runtime candidate implements `CF01-FR-001` through `CF01-FR-032`.
+- **Governance integration: complete within the repository** — C1-A foundation, runtime and R1–R4 hardening are merged to canonical `main`.
+- **Packaged: complete for the current candidate** — deterministic double-build ZIP, embedded manifest, detached ZIP checksum, SPDX 2.3 SBOM and detached SBOM checksum are retained together.
+- **Automated-QA Green: complete for the exact reviewed head** — exact-head PHP 8.1/8.3, Python governance, runtime, forty-round and release-bundle gates passed.
 - **Staging-Accepted: pending**
 - **Live-Deployed: pending**
 - **Operational: pending**
+
+## Exact canonical evidence
+
+- Main head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Successful main GitHub Actions run: `31042006210`
+- Runtime / schema / contract: `1.0.0 / 1.0.0 / 1.0.0`
+- Functional requirements traced: `32/32`
+- Retained artifact ID: `8944933830`
+- Artifact name: `cf-01-release-5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Artifact size: `105463` bytes
+- Artifact archive digest: `sha256:47122c85cfb0472ff2c3f3958291dea7c65677253f4f063ef7cbf0d429964218`
+- Installable ZIP SHA-256: `6967242b62250b1711c9643f29d2fda5a7c5eef9a8937d28331b28619dc3b1ea`
+- SPDX 2.3 SBOM SHA-256: `9564eef0e1e458bb1ce9ffb89fd988eb9ddd67e5991bf2b4ec438a5461416bd1`
+
+The exact main workflow completed successfully for governance on Python 3.11 and 3.12, PHP R1–R4 review on PHP 8.1 and 8.3, forty review-and-correction rounds and the deterministic release-evidence bundle. The pull-request merge-ref job is intentionally applicable to pull-request events and was skipped on the final `main` push.
 
 ## Release evidence bundle law
 
@@ -21,7 +36,7 @@ The canonical source release bundle contains exactly these retained deliverables
 4. deterministic SPDX 2.3 JSON SBOM covering every staged plugin file;
 5. detached SBOM SHA-256 receipt.
 
-Two complete builds must be byte-identical across all five files. The workflow validates the ZIP structure, internal manifest, checksums, SPDX identity, analyzed-file inventory and package relationships before uploading the complete bundle as a retained GitHub Actions artifact. Exact immutable IDs and checksums belong in the final pull-request evidence after the last source commit.
+Two complete builds must be byte-identical across all five files. The workflow validates ZIP structure, internal manifest, checksums, SPDX identity, analyzed-file inventory and package relationships before retaining the complete bundle as one GitHub Actions artifact.
 
 ## Runtime safety state
 
@@ -46,4 +61,4 @@ Real patient data and activation remain prohibited until all of the following ar
 
 ## Evidence boundary
 
-Exact commit SHA, workflow run, artifact ID, deterministic ZIP/SBOM checksums and final assertion totals are pull-request-owned immutable evidence and are recorded only after the last source commit passes every gate. A ZIP, checksum, SBOM or green CI run is not production completion.
+The present repository establishes `Specified`, `Coded`, `Packaged` and `Automated-QA Green` for the reviewed candidate. A ZIP, checksum, SBOM, green CI run or repository merge is not `Staging-Accepted`, `Live-Deployed` or `Operational` completion. No claim of being unhackable, universally compliant, certified or absolutely defect-free is permitted.
