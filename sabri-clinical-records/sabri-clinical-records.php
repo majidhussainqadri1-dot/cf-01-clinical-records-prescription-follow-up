@@ -24,6 +24,7 @@ $cf01_files = array(
     'class-cf01-contracts.php',
     'class-cf01-authorization.php',
     'class-cf01-patients.php',
+    'class-cf01-role-context.php',
     'class-cf01-relationships.php',
     'class-cf01-consents.php',
     'class-cf01-encounters.php',
@@ -34,7 +35,9 @@ $cf01_files = array(
     'class-cf01-break-glass.php',
     'class-cf01-audit-outbox.php',
     'class-cf01-retention.php',
+    'class-cf01-activation-evidence.php',
     'class-cf01-rest.php',
+    'class-cf01-lifecycle-rest.php',
     'class-cf01-ui-health.php',
     'class-cf01-migrations.php',
 );
@@ -46,9 +49,11 @@ unset($cf01_files, $cf01_file);
 
 final class CF01_Plugin {
     public static function boot(): void {
+        CF01_Activation_Evidence::register();
         add_action('plugins_loaded', array(__CLASS__, 'plugins_loaded'));
         add_action('init', array('CF01_UI', 'register'));
         add_action('rest_api_init', array('CF01_REST', 'register_routes'));
+        add_action('rest_api_init', array('CF01_Lifecycle_REST', 'register_routes'));
         add_action('cf01_process_outbox', array('CF01_Outbox', 'process'));
         add_action('cf01_retention_reconcile', array('CF01_Retention', 'reconcile'));
         add_action('cf01_followup_reconcile', array('CF01_Followups', 'reconcile_due'));
