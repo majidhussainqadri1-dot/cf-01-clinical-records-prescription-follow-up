@@ -5,11 +5,11 @@
 - **Specified:** complete under the Definitive Master Plan, CF-01 conditional plan and merged C1-A governance baseline.
 - **Coded:** complete disabled-by-default runtime candidate for `CF01-FR-001` through `CF01-FR-032`.
 - **Governance integration:** the reviewed C1-A foundation is merged to canonical `main`; the runtime branch has been reconciled with that baseline.
-- **Packaged:** deterministic double-build evidence must be recorded against the final exact source head in the pull-request evidence.
-- **Automated-QA Green:** exact-head PHP 8.1/8.3, governance, runtime, forty-round, policy/package and pull-request merge-ref gates must all pass against the final source head.
-- **Staging-Accepted:** no.
-- **Live-Deployed:** no.
-- **Operational:** no.
+- **Packaged:** pending exact-head deterministic double-build receipt.
+- **Automated-QA Green:** pending exact-head PHP 8.1/8.3, governance, runtime, forty-round, policy/package and pull-request merge-ref evidence.
+- **Staging-Accepted: pending**
+- **Live-Deployed: pending**
+- **Operational: pending**
 
 ## Runtime safety state
 
