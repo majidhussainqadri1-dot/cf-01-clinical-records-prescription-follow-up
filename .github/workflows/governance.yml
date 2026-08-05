@@ -1,4 +1,4 @@
-name: CF-01 Exact-Head Review Gates
+name: CF-01 Unified R1-R4 Governance and Runtime Gates
 
 on:
   push:
@@ -10,20 +10,55 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
-  php-review:
-    name: PHP ${{ matrix.php }} clinical review
+  governance-exact-head:
+    name: Governance and repository review — Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        php: ["8.1", "8.3"]
+        python: ["3.11", "3.12"]
     steps:
-      - name: Checkout exact event head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run unified governance tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python tools/validate_repository.py .
+          python tools/validate_runtime.py .
+          git diff --check
+      - name: Emit exact-head evidence
+        run: |
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "validated_sha=$(git rev-parse HEAD)"
+          echo "workflow_run=${GITHUB_RUN_ID}"
+
+  php-exact-head:
+    name: PHP ${{ matrix.php }} R1-R4 clinical review — exact head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.1", "8.3"]
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Run syntax and ten review suites
         run: |
           set -euo pipefail
@@ -41,19 +76,22 @@ jobs:
             php tests/adversarial-round4.php
             php tests/adversarial-round4-compensation.php
           '
+      - name: Emit exact-head evidence
+        run: |
+          echo "validated_sha=$(git rev-parse HEAD)"
+          echo "workflow_run=${GITHUB_RUN_ID}"
 
-  forty-round-review:
-    name: Forty review and correction rounds
+  forty-round-exact-head:
+    name: Forty review and correction rounds — exact head
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
+    timeout-minutes: 25
     steps:
-      - name: Checkout exact event head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Run 40 review-to-correction cycles
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Run 40 review-to-correction cycles and R1-R4 regressions
         run: |
           set -euo pipefail
           python3 tools/run_40_reviews.py
@@ -61,19 +99,19 @@ jobs:
           php tests/adversarial-round3.php
           php tests/adversarial-round4.php
           php tests/adversarial-round4-compensation.php
+          git diff --check
 
-  policy-package-review:
-    name: Policy, JavaScript and deterministic package review
+  policy-package-exact-head:
+    name: Policy, JavaScript and deterministic package — exact head
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
+    timeout-minutes: 25
     steps:
-      - name: Checkout exact event head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Validate repository and runtime policy
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate source policies and R1-R4 security regressions
         run: |
           set -euo pipefail
           node --check sabri-clinical-records/assets/js/clinical.js
@@ -83,6 +121,7 @@ jobs:
           php tests/adversarial-round4.php
           php tests/adversarial-round4-compensation.php
           python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/validate_repository.py .
           python3 tools/validate_runtime.py .
           git diff --check
       - name: Verify deterministic installable package
@@ -99,3 +138,45 @@ jobs:
           cmp -s /tmp/cf01-first.zip build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip
           unzip -t build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip >/dev/null
           test "$(unzip -Z1 build/cf-01-clinical-records-prescription-follow-up-1.0.0.zip | cut -d/ -f1 | sort -u)" = "sabri-clinical-records"
+          echo "package_sha256=${second_hash}"
+
+  merge-ref-compatibility:
+    name: Governance and R1-R4 runtime merge-ref compatibility
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout pull-request merge ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Validate merged governance and R1-R4 runtime surface
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python tools/validate_repository.py .
+          python tools/validate_runtime.py .
+          node --check sabri-clinical-records/assets/js/clinical.js
+          docker run --rm -v "$PWD:/app" -w /app php:8.3-cli sh -lc '
+            set -eu
+            find sabri-clinical-records tests -type f -name "*.php" -print0 | xargs -0 -n1 php -l >/dev/null
+            php tests/unit.php
+            php tests/runtime-adversarial.php
+            php tests/static-audit.php
+            php tests/migration-review.php
+            php tests/fresh-review.php
+            php tests/security-corrections.php
+            php tests/three-plan-corrections.php
+            php tests/adversarial-round3.php
+            php tests/adversarial-round4.php
+            php tests/adversarial-round4-compensation.php
+          '
+          git diff --check
+      - name: Emit merge-ref evidence
+        run: |
+          echo "merge_ref_sha=$(git rev-parse HEAD)"
+          echo "workflow_run=${GITHUB_RUN_ID}"
