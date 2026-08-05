@@ -4,7 +4,7 @@ defined('ABSPATH') || exit;
 /**
  * Coordinates high-risk release transitions without taking ownership away from
  * native modules. It validates immutable provider acceptance, compensates
- * partial activation, and supplies the canonical migration/rollback entrypoints.
+ * partial activation, and supplies canonical migration/rollback entrypoints.
  */
 final class CF01_Release_Orchestrator {
     private const FILE08_CONTRACT_VERSION = '1.0.0';
@@ -40,8 +40,7 @@ final class CF01_Release_Orchestrator {
         if (self::$compensating || $new_value === $old_value) {
             return $new_value;
         }
-        $state = (string) get_option('cf01_activation_state', 'disabled');
-        if ($state !== 'enabled') {
+        if ((string) get_option('cf01_activation_state', 'disabled') !== 'enabled') {
             update_option(self::EVIDENCE_BACKUP_OPTION, array(
                 'existed' => $old_value !== false && $old_value !== null && $old_value !== '',
                 'value' => $old_value,
@@ -52,6 +51,9 @@ final class CF01_Release_Orchestrator {
     }
 
     public static function guard_activation_state($new_value, $old_value, string $option) {
+        if (self::$compensating) {
+            return $new_value;
+        }
         $new = sanitize_key((string) $new_value);
         $old = sanitize_key((string) $old_value);
         if ($new === 'enabled' && $old !== 'enabled') {
@@ -221,7 +223,7 @@ final class CF01_Release_Orchestrator {
 
     /**
      * Canonical File 08 extraction entrypoint. The legacy method remains for
-     * compatibility but real write batches must use this fail-closed path.
+     * compatibility, but real write batches must use this fail-closed path.
      */
     public static function extract_file08_batch(int $actor_id, array $batch, string $cursor = ''): array {
         self::authorize_governance_actor($actor_id, 'run_clinical_migration', 'cf01_run_clinical_migrations');
@@ -263,8 +265,10 @@ final class CF01_Release_Orchestrator {
                     $counts[$written ? 'written' : 'existing']++;
                 }
             });
+            $ledger_uuid = CF01_DB::uuid();
             $receipt = array(
                 'migration_id' => $validated['migration_id'],
+                'ledger_migration_uuid' => $ledger_uuid,
                 'request_hash' => $validated['request_hash'],
                 'source_snapshot_sha256' => $validated['source_snapshot_sha256'],
                 'source_contract_version' => self::FILE08_CONTRACT_VERSION,
@@ -277,7 +281,7 @@ final class CF01_Release_Orchestrator {
                 'completed_at' => CF01_DB::now(),
                 'replayed' => false,
             );
-            self::record_migration_batch($receipt);
+            self::record_migration_batch($receipt, $ledger_uuid);
             update_option($claim_key, array('status' => 'completed', 'request_hash' => $validated['request_hash'], 'receipt' => $receipt), false);
             return $receipt;
         } catch (Throwable $error) {
@@ -318,6 +322,10 @@ final class CF01_Release_Orchestrator {
     }
 
     public static function legacy_rollback_commit($receipt, array $migration, string $reason): array {
+        if ((string) get_option('cf01_activation_state', 'disabled') !== 'disabled') {
+            throw new RuntimeException('Legacy rollback is blocked while the clinical runtime is active; use the canonical disabled-runtime orchestrator.');
+        }
+        self::authorize_governance_actor(get_current_user_id(), 'run_clinical_rollback', 'cf01_run_clinical_migrations');
         return self::commit_rollback_receipt($receipt, $migration, $reason);
     }
 
@@ -350,19 +358,18 @@ final class CF01_Release_Orchestrator {
         if (strlen($cursor) > 191 || ($cursor !== '' && !preg_match('/^[A-Za-z0-9._:\-]+$/', $cursor))) {
             throw new InvalidArgumentException('Migration cursor is malformed.');
         }
-        $request_hash = hash('sha256', CF01_Crypto::canonical_json(array(
-            'migration_id' => $migration_id,
-            'source_snapshot_sha256' => $snapshot,
-            'source_contract_version' => self::FILE08_CONTRACT_VERSION,
-            'dry_run' => $batch['dry_run'],
-            'cursor' => $cursor,
-            'reconciliation_plan' => $batch['reconciliation_plan'],
-            'rollback_plan' => $batch['rollback_plan'],
-        )));
         return array(
             'migration_id' => $migration_id,
             'source_snapshot_sha256' => $snapshot,
-            'request_hash' => $request_hash,
+            'request_hash' => hash('sha256', CF01_Crypto::canonical_json(array(
+                'migration_id' => $migration_id,
+                'source_snapshot_sha256' => $snapshot,
+                'source_contract_version' => self::FILE08_CONTRACT_VERSION,
+                'dry_run' => $batch['dry_run'],
+                'cursor' => $cursor,
+                'reconciliation_plan' => $batch['reconciliation_plan'],
+                'rollback_plan' => $batch['rollback_plan'],
+            ))),
         );
     }
 
@@ -421,9 +428,9 @@ final class CF01_Release_Orchestrator {
         return true;
     }
 
-    private static function record_migration_batch(array $receipt): void {
+    private static function record_migration_batch(array $receipt, string $ledger_uuid): void {
         CF01_DB::insert('migrations', array(
-            'migration_uuid' => CF01_DB::uuid(),
+            'migration_uuid' => $ledger_uuid,
             'migration_key' => 'file08_' . substr(hash('sha256', (string) $receipt['migration_id']), 0, 40),
             'status' => !empty($receipt['complete']) ? 'completed' : 'in_progress',
             'cursor_value' => sanitize_text_field((string) $receipt['next_cursor']),
@@ -530,6 +537,10 @@ final class CF01_Release_Orchestrator {
         self::$compensating = true;
         try {
             self::clear_hooks(array_keys(self::SCHEDULES));
+            $state = (string) get_option('cf01_activation_state', 'disabled');
+            if (in_array($state, array('enabled', 'activating', 'degraded'), true)) {
+                update_option('cf01_activation_state', 'disabled', false);
+            }
             $backup = get_option(self::EVIDENCE_BACKUP_OPTION, null);
             if (is_array($backup)) {
                 if (!empty($backup['existed'])) {
@@ -541,7 +552,11 @@ final class CF01_Release_Orchestrator {
             self::delete_option('cf01_pending_activation_fingerprint');
             self::delete_option('cf01_activation_transition_lock');
             self::delete_option(self::TRANSITION_OPTION);
-            update_option('cf01_activation_compensation_receipt', array('reason' => sanitize_key($reason), 'compensated_at' => CF01_DB::now()), false);
+            update_option('cf01_activation_compensation_receipt', array(
+                'reason' => sanitize_key($reason),
+                'compensated_at' => CF01_DB::now(),
+                'state' => 'disabled',
+            ), false);
         } finally {
             self::$compensating = false;
         }
