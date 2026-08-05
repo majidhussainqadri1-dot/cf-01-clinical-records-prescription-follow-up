@@ -1,20 +1,22 @@
 # CF-01 Release Status
 
-## Current canonical source stage
+## Current status classes
 
 - **Specified: complete** — Definitive Master Plan, All-Chats Directive Register v2.1, CF-01 conditional plan and merged C1-A governance baseline are traced.
 - **Coded: complete within the approved source scope** — disabled-by-default runtime candidate implements `CF01-FR-001` through `CF01-FR-032`.
 - **Governance integration: complete within the repository** — C1-A foundation, runtime and R1–R4 hardening are merged to canonical `main`.
-- **Packaged: complete for the current candidate** — deterministic double-build ZIP, embedded manifest, detached ZIP checksum, SPDX 2.3 SBOM and detached SBOM checksum are retained together.
-- **Automated-QA Green: complete for the exact reviewed head** — exact-head PHP 8.1/8.3, Python governance, runtime, forty-round and release-bundle gates passed.
+- **Packaged: complete for the reviewed implementation release** — deterministic double-build ZIP, embedded manifest, detached ZIP checksum, SPDX 2.3 SBOM and detached SBOM checksum are retained together.
+- **Automated-QA Green: complete for the reviewed implementation release** — exact-head PHP 8.1/8.3, Python governance, runtime, forty-round and release-bundle gates passed.
 - **Staging-Accepted: pending**
 - **Live-Deployed: pending**
 - **Operational: pending**
 
-## Exact canonical evidence
+## Immutable implementation-release evidence
 
-- Main head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
-- Successful main GitHub Actions run: `31042006210`
+This section identifies the runtime/package release baseline. It does not claim that its SHA will remain the tip of `main` after later documentation or governance commits.
+
+- Reviewed implementation head: `5ad4319927713b6c4ce4b8ad459df35fe267ba9c`
+- Successful implementation-release GitHub Actions run: `31042006210`
 - Runtime / schema / contract: `1.0.0 / 1.0.0 / 1.0.0`
 - Functional requirements traced: `32/32`
 - Retained artifact ID: `8944933830`
@@ -24,7 +26,7 @@
 - Installable ZIP SHA-256: `6967242b62250b1711c9643f29d2fda5a7c5eef9a8937d28331b28619dc3b1ea`
 - SPDX 2.3 SBOM SHA-256: `9564eef0e1e458bb1ce9ffb89fd988eb9ddd67e5991bf2b4ec438a5461416bd1`
 
-The exact main workflow completed successfully for governance on Python 3.11 and 3.12, PHP R1–R4 review on PHP 8.1 and 8.3, forty review-and-correction rounds and the deterministic release-evidence bundle. The pull-request merge-ref job is intentionally applicable to pull-request events and was skipped on the final `main` push.
+The implementation-release workflow completed successfully for governance on Python 3.11 and 3.12, PHP R1–R4 review on PHP 8.1 and 8.3, forty review-and-correction rounds and the deterministic release-evidence bundle. Later pull-request and main-push runs validate later documentation/governance heads and are recorded by GitHub Actions; a committed file does not attempt to predict the SHA of its own future merge commit.
 
 ## Release evidence bundle law
 
@@ -61,4 +63,4 @@ Real patient data and activation remain prohibited until all of the following ar
 
 ## Evidence boundary
 
-The present repository establishes `Specified`, `Coded`, `Packaged` and `Automated-QA Green` for the reviewed candidate. A ZIP, checksum, SBOM, green CI run or repository merge is not `Staging-Accepted`, `Live-Deployed` or `Operational` completion. No claim of being unhackable, universally compliant, certified or absolutely defect-free is permitted.
+The repository establishes `Specified`, `Coded`, `Packaged` and `Automated-QA Green` for the reviewed implementation candidate. A ZIP, checksum, SBOM, green CI run or repository merge is not `Staging-Accepted`, `Live-Deployed` or `Operational` completion. No claim of being unhackable, universally compliant, certified or absolutely defect-free is permitted.
