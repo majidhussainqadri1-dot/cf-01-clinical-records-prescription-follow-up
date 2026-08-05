@@ -18,6 +18,7 @@ from tools.validate_repository import (
 
 PINNED_CHECKOUT = "11d5960a326750d5838078e36cf38b85af677262"
 PINNED_SETUP_PYTHON = "a26af69be951a213d495a4c3e4e4022e16d87065"
+PINNED_UPLOAD_ARTIFACT = "ea165f8d65b6e75b540449e92b4886f43607fa02"
 
 
 class RepositoryValidatorTests(unittest.TestCase):
@@ -40,7 +41,10 @@ jobs:
       - uses: actions/setup-python@{PINNED_SETUP_PYTHON}
       - run: python3 tools/validate_repository.py .
       - run: python3 tools/validate_runtime.py .
-      - run: cmp -s first.zip second.zip
+      - run: cmp -s first.zip second.zip && test -s release.spdx.json
+      - uses: actions/upload-artifact@{PINNED_UPLOAD_ARTIFACT}
+        with:
+          path: release.spdx.json
   merge-ref-compatibility:
     name: merge-ref compatibility
     runs-on: ubuntu-24.04
