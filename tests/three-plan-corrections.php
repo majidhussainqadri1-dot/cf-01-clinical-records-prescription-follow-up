@@ -42,7 +42,7 @@ $check(str_contains($rest, "array('/me', 'GET', 'my_record')"), 'Own-record REST
 $check(str_contains($rest, "array('/prescriptions/(?P<id>[a-f0-9-]{36})', 'GET', 'prescription')"), 'Prescription read route is missing.');
 $check(str_contains($rest, "array('/followups/(?P<id>[a-f0-9-]{36})', 'GET', 'followup')"), 'Follow-up read route is missing.');
 $check(str_contains($rest, 'authorize_patient_read'), 'Shared patient/doctor read authorization is missing.');
-$check(str_contains($rest, "CF01_Audit::access($actor"), 'Read-access audit evidence is missing.');
+$check(str_contains($rest, 'CF01_Audit::access($actor'), 'Read-access audit evidence is missing.');
 $check(str_contains($rest, "'Referrer-Policy' => 'no-referrer'"), 'Private REST referrer policy is missing.');
 $check(str_contains($patients, 'for_platform_subject'), 'Canonical own-record resolver is missing.');
 $check(str_contains($patients, "status NOT IN (%s,%s)"), 'Quarantined/merged clinical identities are not excluded.');
