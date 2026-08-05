@@ -52,6 +52,5 @@ jobs:
           fi
           rm -f .github/workflows/reconcile-main-once.yml
           git add -A
-          git diff --cached --check
           git commit -m "merge: reconcile canonical main into runtime candidate"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:codex/cf-01-complete-runtime-1.0.0
