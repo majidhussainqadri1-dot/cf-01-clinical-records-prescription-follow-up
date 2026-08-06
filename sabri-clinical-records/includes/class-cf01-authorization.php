@@ -8,7 +8,7 @@ final class CF01_Authorization {
         'purge_record', 'merge_patient', 'link_platform_identity', 'update_guardian_context',
         'activate_module', 'review_break_glass', 'revoke_break_glass', 'decide_clinical_right',
         'fulfill_clinical_export', 'review_attachment', 'relink_attachment',
-        'run_clinical_migration', 'run_clinical_rollback', 'disable_module'
+        'run_clinical_migration', 'run_clinical_rollback', 'rotate_clinical_key', 'disable_module'
     );
 
     public static function require_enabled(): void {
@@ -202,6 +202,7 @@ final class CF01_Authorization {
         $capability_map = array(
             'activate_module' => 'cf01_activate_clinical',
             'disable_module' => 'cf01_activate_clinical',
+            'rotate_clinical_key' => 'cf01_manage_clinical_keys',
             'create_patient' => 'cf01_manage_clinical_records',
             'create_clinical_patient' => 'cf01_manage_clinical_records',
             'link_patient_identity' => 'cf01_manage_clinical_records',
