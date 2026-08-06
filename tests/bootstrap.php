@@ -263,7 +263,7 @@ add_filter('cf01_prescription_safety_review', fn($result, array $request, array 
 
 $files = array(
     'class-cf01-db.php','class-cf01-crypto.php','class-cf01-contracts.php','class-cf01-authorization.php',
-    'class-cf01-patients.php','class-cf01-relationships.php','class-cf01-consents.php','class-cf01-encounters.php',
+    'class-cf01-patients.php','class-cf01-role-context.php','class-cf01-relationships.php','class-cf01-consents.php','class-cf01-encounters.php',
     'class-cf01-attachments.php','class-cf01-prescriptions.php','class-cf01-followups.php','class-cf01-rights.php',
     'class-cf01-break-glass.php','class-cf01-audit-outbox.php','class-cf01-retention.php','class-cf01-rest.php',
     'class-cf01-ui-health.php','class-cf01-migrations.php',

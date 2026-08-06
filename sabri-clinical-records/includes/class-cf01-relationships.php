@@ -27,13 +27,18 @@ final class CF01_Relationships {
         if (!$scope) {
             throw new InvalidArgumentException('Relationship scope is required.');
         }
+        $source_reference = sanitize_text_field((string) ($data['source_reference'] ?? ''));
+        $source = CF01_Contracts::relationship_source($source_reference, $actor_id, $patient_uuid, $doctor_user_id, $purpose, $scope);
+        if (empty($source['valid'])) {
+            throw new RuntimeException('A current native-owner relationship source assertion is required.');
+        }
         $relationship_uuid = CF01_DB::uuid();
         CF01_DB::insert('relationships', array(
             'relationship_uuid' => $relationship_uuid,
             'patient_uuid' => $patient_uuid,
             'doctor_user_id' => $doctor_user_id,
             'clinic_reference' => sanitize_text_field((string) ($data['clinic_reference'] ?? '')),
-            'source_reference' => sanitize_text_field((string) ($data['source_reference'] ?? '')),
+            'source_reference' => $source_reference,
             'purpose' => $purpose,
             'scope_json' => wp_json_encode($scope),
             'status' => 'proposed',
@@ -101,6 +106,9 @@ final class CF01_Relationships {
             self::require_target_practitioner((int) $row['doctor_user_id'], 'reactivate_relationship', (string) $row['purpose']);
             CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
         }
+        if ($next === 'ended') {
+            self::require_termination_reconciliation($actor_id, $row, $reason);
+        }
         $data = array(
             'status' => $next,
             'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
@@ -138,6 +146,42 @@ final class CF01_Relationships {
 
     public static function transition_map(): array {
         return self::TRANSITIONS;
+    }
+
+
+
+    private static function require_termination_reconciliation(int $actor_id, array $relationship, string $reason): void {
+        $open_encounters = CF01_DB::rows(
+            'SELECT encounter_uuid, status FROM ' . CF01_DB::table('encounters') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
+            array($relationship['relationship_uuid'], 'draft', 'in_progress', 'ready_to_sign')
+        );
+        $open_prescriptions = CF01_DB::rows(
+            'SELECT prescription_uuid, status FROM ' . CF01_DB::table('prescriptions') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
+            array($relationship['relationship_uuid'], 'draft', 'ready_to_sign', 'signed')
+        );
+        if (!$open_encounters && !$open_prescriptions) {
+            return;
+        }
+        $request = array(
+            'contract_version' => '1.0.0',
+            'relationship_uuid' => (string) $relationship['relationship_uuid'],
+            'patient_uuid' => (string) $relationship['patient_uuid'],
+            'doctor_user_id' => (int) $relationship['doctor_user_id'],
+            'reason_hash' => hash('sha256', trim($reason)),
+            'open_encounters' => array_column($open_encounters, 'encounter_uuid'),
+            'open_prescriptions' => array_column($open_prescriptions, 'prescription_uuid'),
+            'future_access_revoked_on_commit' => true,
+        );
+        $result = apply_filters('cf01_relationship_termination_reconciliation', null, $request, $actor_id);
+        if (!is_array($result)
+            || ($result['contract_version'] ?? '') !== '1.0.0'
+            || empty($result['accepted'])
+            || empty($result['reconciled'])
+            || empty($result['continuity_instructions_recorded'])
+            || empty($result['open_items_resolved'])
+        ) {
+            throw new RuntimeException('Open clinical work must be reconciled before relationship termination.');
+        }
     }
 
     private static function authorize_relationship_actor(int $actor_id, array $relationship, string $action): void {

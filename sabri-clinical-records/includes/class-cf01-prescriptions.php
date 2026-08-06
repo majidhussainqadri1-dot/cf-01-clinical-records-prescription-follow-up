@@ -14,12 +14,12 @@ final class CF01_Prescriptions {
 
     public static function create(int $actor_id, string $patient_uuid, string $encounter_uuid, array $data): array {
         CF01_Authorization::clinician($actor_id, 'create_prescription');
-        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
         CF01_Authorization::consent($patient_uuid, 'clinical_care');
         $encounter = CF01_Encounters::get($encounter_uuid);
         if ((string) $encounter['patient_uuid'] !== $patient_uuid) {
             throw new RuntimeException('Prescription and encounter patient do not match.');
         }
+        CF01_Authorization::relationship_for_record($patient_uuid, $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'create_prescription');
         if (!in_array((string) $encounter['status'], array('signed', 'addended'), true)) {
             throw new RuntimeException('A signed encounter is required before prescription creation.');
         }
@@ -53,7 +53,8 @@ final class CF01_Prescriptions {
     public static function update(int $actor_id, string $uuid, array $data, string $next_status, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'update_prescription');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        $encounter = CF01_Encounters::get((string) $row['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'update_prescription');
         CF01_Authorization::expected_version($row, $expected_version);
         self::transition_allowed((string) $row['status'], $next_status);
         if (!in_array($next_status, array('draft', 'ready_to_sign'), true)) {
@@ -77,7 +78,8 @@ final class CF01_Prescriptions {
     public static function sign(int $actor_id, string $uuid, int $expected_version): array {
         $row = self::get($uuid);
         $context = CF01_Authorization::clinician($actor_id, 'sign_prescription');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        $encounter = CF01_Encounters::get((string) $row['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'sign_prescription');
         CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
         CF01_Authorization::expected_version($row, $expected_version);
         self::transition_allowed((string) $row['status'], 'signed');
@@ -87,6 +89,9 @@ final class CF01_Prescriptions {
         if (empty($safety['valid']) || empty($safety['passed']) || !empty($safety['blocking'])) {
             throw new RuntimeException('Prescription safety review did not pass.');
         }
+        $signed_at = CF01_DB::now();
+        $demographics = CF01_Patients::demographics(CF01_Patients::get((string) $row['patient_uuid']));
+        $signed_time = CF01_Contracts::local_timestamp($signed_at, (string) ($demographics['time_zone'] ?? 'UTC'));
         $snapshot = array(
             'prescription_uuid' => $uuid,
             'patient_uuid' => (string) $row['patient_uuid'],
@@ -95,7 +100,9 @@ final class CF01_Prescriptions {
             'professional_uuid' => (string) $context['professional']['professional_uuid'],
             'order_hash' => (string) $row['order_hash'],
             'row_version' => $expected_version,
-            'signed_at' => CF01_DB::now(),
+            'signed_at' => $signed_time['utc'],
+            'signed_local_at' => $signed_time['local'],
+            'time_zone' => $signed_time['time_zone'],
             'contract_version' => CF01_CONTRACT_VERSION,
             'safety_evidence_reference' => (string) $safety['evidence_reference'],
             'safety_warnings_hash' => hash('sha256', CF01_Crypto::canonical_json((array) $safety['warnings'])),
@@ -118,6 +125,8 @@ final class CF01_Prescriptions {
     public static function supersede(int $actor_id, string $old_uuid, array $replacement_data, int $expected_version): array {
         $old = self::get($old_uuid);
         CF01_Authorization::clinician($actor_id, 'sign_prescription');
+        $old_encounter = CF01_Encounters::get((string) $old['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $old['patient_uuid'], $actor_id, 'clinical_care', (string) $old_encounter['relationship_uuid'], 'supersede_prescription');
         CF01_Authorization::expected_version($old, $expected_version);
         if (($old['status'] ?? '') !== 'signed') {
             throw new RuntimeException('Only a signed prescription can be superseded.');
@@ -147,7 +156,8 @@ final class CF01_Prescriptions {
     public static function discontinue(int $actor_id, string $uuid, string $reason, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'sign_prescription');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        $encounter = CF01_Encounters::get((string) $row['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'discontinue_prescription');
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') !== 'signed') {
             throw new RuntimeException('Only an active signed prescription can be discontinued.');
@@ -185,6 +195,18 @@ final class CF01_Prescriptions {
         return self::STATES;
     }
 
+
+    public static function verify_integrity(array $row): bool {
+        if (empty($row['signature']) || empty($row['snapshot_cipher']) || ($row['status'] ?? '') === 'draft') {
+            return false;
+        }
+        $snapshot = CF01_Crypto::decrypt((string) $row['snapshot_cipher'], 'prescription-snapshot');
+        return is_array($snapshot)
+            && hash_equals((string) ($snapshot['prescription_uuid'] ?? ''), (string) ($row['prescription_uuid'] ?? ''))
+            && hash_equals((string) ($snapshot['order_hash'] ?? ''), (string) ($row['order_hash'] ?? ''))
+            && CF01_Crypto::verify($snapshot, 'prescription-signature', (string) $row['signature']);
+    }
+
     private static function transition_allowed(string $current, string $next): void {
         if (!isset(self::STATES[$current]) || !in_array($next, self::STATES[$current], true)) {
             throw new RuntimeException('Invalid prescription transition.');
@@ -201,13 +223,19 @@ final class CF01_Prescriptions {
                 throw new InvalidArgumentException('Prescription field is required: ' . $field);
             }
         }
-        $allowed = array_merge($required, array('warnings', 'language', 'links', 'safety_status', 'review_due_at'));
+        $allowed = array_merge($required, array('warnings', 'language', 'links', 'safety_status', 'review_due_at', 'instructions_reviewed', 'safety_override_reason'));
         $normalized = array();
         foreach ($allowed as $field) {
             if (array_key_exists($field, $data)) {
                 $normalized[$field] = self::sanitize($data[$field]);
             }
         }
+        self::reject_ambiguous_abbreviations($normalized);
+        $language = sanitize_text_field((string) ($normalized['language'] ?? ''));
+        if ($language === '' || !preg_match('/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/', $language)) {
+            throw new InvalidArgumentException('A valid prescription language tag is required.');
+        }
+        $normalized['instructions_reviewed'] = true;
         $normalized['clinician_entered'] = true;
         $normalized['autonomous_ai'] = false;
         $normalized['autonomous_radar'] = false;
@@ -216,6 +244,23 @@ final class CF01_Prescriptions {
             $normalized['warnings'] = array('Follow the clinician-entered instructions; seek local emergency care for urgent symptoms.');
         }
         return $normalized;
+    }
+
+
+
+    private static function reject_ambiguous_abbreviations(array $order): void {
+        $text = strtolower(implode(' ', array_map(static function ($value): string {
+            return is_scalar($value) ? (string) $value : '';
+        }, array_intersect_key($order, array_flip(array('dose', 'frequency', 'duration', 'repetition', 'instructions'))))));
+        $patterns = array(
+            '/\bq\.?d\.?\b/', '/\bq\.?o\.?d\.?\b/', '/\bi\.?u\.?\b/', '/\bu\b/',
+            '/\bsc\b/', '/\bcc\b/', '/\bhs\b/', '/\btiw\b/', '/\bbiw\b/'
+        );
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text)) {
+                throw new InvalidArgumentException('Ambiguous prescription abbreviations are prohibited; write complete instructions.');
+            }
+        }
     }
 
     private static function validate_signable(array $order): void {

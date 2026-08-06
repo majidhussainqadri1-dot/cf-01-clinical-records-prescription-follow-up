@@ -19,6 +19,7 @@ final class CF01_REST {
             array('/encounters/(?P<id>[a-f0-9-]{36})/sign', 'POST', 'sign_encounter'),
             array('/encounters/(?P<id>[a-f0-9-]{36})/addenda', 'POST', 'addendum'),
             array('/encounters/(?P<id>[a-f0-9-]{36})/attachments', 'POST', 'attach'),
+            array('/attachments/(?P<id>[a-f0-9-]{36})/delivery', 'POST', 'attachment_delivery'),
             array('/prescriptions', 'POST', 'create_prescription'),
             array('/prescriptions/(?P<id>[a-f0-9-]{36})', 'GET', 'prescription'),
             array('/prescriptions/(?P<id>[a-f0-9-]{36})/sign', 'POST', 'sign_prescription'),
@@ -92,9 +93,9 @@ final class CF01_REST {
         return self::respond(function () use ($request): array {
             $patient_uuid = (string) $request['patient'];
             $actor = get_current_user_id();
-            $role = self::authorize_patient_read($actor, $patient_uuid, 'view_clinical_record');
+            $context = self::authorize_patient_read($actor, $patient_uuid, 'view_clinical_record');
             $fields = CF01_Authorization::fields(
-                $role,
+                (string) $context['role'],
                 'clinical_care',
                 self::requested_fields($request, array('summary', 'encounters', 'prescriptions', 'followups', 'consents')),
                 array('patient_uuid' => $patient_uuid)
@@ -126,7 +127,12 @@ final class CF01_REST {
     }
 
     public static function timeline(WP_REST_Request $request): WP_REST_Response {
-        return self::respond(fn() => self::timeline_rows(get_current_user_id(), (string) $request['patient'], max(1, min(100, (int) ($request['limit'] ?? 50)))));
+        return self::respond(fn() => self::timeline_rows(
+            get_current_user_id(),
+            (string) $request['patient'],
+            max(1, min(100, (int) ($request['limit'] ?? 50))),
+            (string) ($request['cursor'] ?? '')
+        ));
     }
 
     public static function request_right(WP_REST_Request $request): WP_REST_Response {
@@ -147,9 +153,9 @@ final class CF01_REST {
         return self::respond(function () use ($request): array {
             $row = CF01_Encounters::get((string) $request['id']);
             $actor = get_current_user_id();
-            self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_encounter');
+            $context = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_encounter');
             CF01_Audit::access($actor, (string) $row['patient_uuid'], 'EncounterViewed', 'encounter', (string) $row['encounter_uuid'], 'clinical_care', 'success');
-            return array('metadata' => self::safe_row($row), 'content' => CF01_Encounters::content($row));
+            return array('metadata' => self::safe_row($row, 'encounters'), 'content' => self::project_encounter_content(CF01_Encounters::content($row), (string) $context['role']));
         });
     }
 
@@ -181,6 +187,12 @@ final class CF01_REST {
         });
     }
 
+    public static function attachment_delivery(WP_REST_Request $request): WP_REST_Response {
+        return self::mutate($request, 'DeliverClinicalAttachment', function () use ($request): array {
+            return array('delivery_grant' => CF01_Attachments::delivery_reference(get_current_user_id(), (string) $request['id']));
+        });
+    }
+
     public static function create_prescription(WP_REST_Request $request): WP_REST_Response {
         return self::mutate($request, 'CreatePrescription', function () use ($request): array {
             $data = self::json($request);
@@ -192,12 +204,13 @@ final class CF01_REST {
         return self::respond(function () use ($request): array {
             $row = CF01_Prescriptions::get((string) $request['id']);
             $actor = get_current_user_id();
-            $role = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_prescription');
+            $context = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_prescription');
+            $role = (string) $context['role'];
             if (!in_array('prescriptions', CF01_Authorization::fields($role, 'clinical_care', array('prescriptions'), $row), true)) {
                 throw new RuntimeException('Prescription access is unavailable.');
             }
             CF01_Audit::access($actor, (string) $row['patient_uuid'], 'PrescriptionViewed', 'prescription', (string) $row['prescription_uuid'], 'clinical_care', 'success');
-            return array('metadata' => self::safe_row($row), 'order' => CF01_Prescriptions::order($row));
+            return array('metadata' => self::safe_row($row, 'prescriptions'), 'order' => CF01_Prescriptions::order($row));
         });
     }
 
@@ -223,7 +236,8 @@ final class CF01_REST {
         return self::respond(function () use ($request): array {
             $row = CF01_Followups::get((string) $request['id']);
             $actor = get_current_user_id();
-            $role = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_followup');
+            $context = self::authorize_patient_read($actor, (string) $row['patient_uuid'], 'view_followup');
+            $role = (string) $context['role'];
             if (!in_array('followups', CF01_Authorization::fields($role, 'clinical_care', array('followups'), $row), true)) {
                 throw new RuntimeException('Follow-up access is unavailable.');
             }
@@ -231,7 +245,7 @@ final class CF01_REST {
             $plan = CF01_Crypto::decrypt((string) $row['plan_cipher'], 'followup-plan');
             CF01_Audit::access($actor, (string) $row['patient_uuid'], 'FollowUpViewed', 'follow_up_plan', (string) $row['followup_uuid'], 'clinical_care', 'success');
             return array(
-                'metadata' => self::safe_row($row),
+                'metadata' => self::safe_row($row, 'followups'),
                 'questionnaire' => is_array($questionnaire) ? $questionnaire : array(),
                 'plan' => is_array($plan) ? $plan : array(),
             );
@@ -340,14 +354,13 @@ final class CF01_REST {
         return array_values(array_unique(array_filter(array_map('sanitize_key', (array) $value))));
     }
 
-    private static function authorize_patient_read(int $actor_id, string $patient_uuid, string $doctor_action): string {
-        if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
-            CF01_Authorization::actor($actor_id, 'view_own_clinical_record');
-            return 'patient';
+    private static function authorize_patient_read(int $actor_id, string $patient_uuid, string $doctor_action): array {
+        try {
+            return CF01_Role_Context::resolve($actor_id, $patient_uuid, 'clinical_care');
+        } catch (Throwable $error) {
+            CF01_Audit::denied($actor_id, 'ClinicalObjectReadDenied', 'clinical_patient', $patient_uuid, 'clinical_care', sanitize_key($doctor_action));
+            throw $error;
         }
-        CF01_Authorization::clinician($actor_id, $doctor_action);
-        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
-        return 'doctor';
     }
 
     private static function project_patient(string $patient_uuid, array $fields): array {
@@ -358,44 +371,107 @@ final class CF01_REST {
         }
         foreach (array('encounters', 'prescriptions', 'followups', 'consents') as $key) {
             if (in_array($key, $fields, true)) {
-                $result[$key] = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY id DESC LIMIT 50', array($patient_uuid));
-                $result[$key] = array_map(array(__CLASS__, 'safe_row'), $result[$key]);
+                $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY id DESC LIMIT 50', array($patient_uuid));
+                $result[$key] = array_map(static fn(array $row): array => self::safe_row($row, $key), $rows);
             }
         }
         return $result;
     }
 
-    private static function timeline_rows(int $actor_id, string $patient_uuid, int $limit): array {
+    private static function timeline_rows(int $actor_id, string $patient_uuid, int $limit, string $cursor = ''): array {
         self::authorize_patient_read($actor_id, $patient_uuid, 'view_clinical_timeline');
+        $before = self::decode_timeline_cursor($cursor, $patient_uuid);
         $items = array();
-        foreach (array('encounters' => 'encounter_uuid', 'prescriptions' => 'prescription_uuid', 'followups' => 'followup_uuid', 'outcomes' => 'outcome_uuid') as $key => $id_field) {
-            $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY created_at DESC LIMIT ' . $limit, array($patient_uuid));
-            foreach ($rows as $row) {
+        $sources = array(
+            'encounters' => array('encounter_uuid', 'status', 'created_at'),
+            'prescriptions' => array('prescription_uuid', 'status', 'created_at'),
+            'followups' => array('followup_uuid', 'status', 'created_at'),
+            'outcomes' => array('outcome_uuid', 'review_status', 'created_at'),
+            'consents' => array('consent_uuid', 'status', 'created_at'),
+        );
+        foreach ($sources as $key => [$id_field, $status_field, $time_field]) {
+            $sql = 'SELECT ' . $id_field . ', ' . $status_field . ', ' . $time_field . ', row_version FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s';
+            $args = array($patient_uuid);
+            if ($before !== '') {
+                $sql .= ' AND ' . $time_field . ' <= %s';
+                $args[] = $before;
+            }
+            $sql .= ' ORDER BY ' . $time_field . ' DESC, ' . $id_field . ' DESC LIMIT ' . ($limit + 1);
+            foreach (CF01_DB::rows($sql, $args) as $row) {
                 $items[] = array(
-                    'type' => rtrim($key, 's'),
+                    'type' => $key === 'consents' ? 'consent' : rtrim($key, 's'),
                     'uuid' => (string) $row[$id_field],
-                    'status' => (string) ($row['status'] ?? $row['review_status'] ?? ''),
-                    'occurred_at' => (string) ($row['created_at'] ?? ''),
+                    'status' => (string) ($row[$status_field] ?? ''),
+                    'occurred_at' => (string) ($row[$time_field] ?? ''),
                     'row_version' => (int) ($row['row_version'] ?? 1),
                 );
             }
         }
-        usort($items, static fn(array $a, array $b): int => strcmp($b['occurred_at'], $a['occurred_at']));
+        $access_sql = 'SELECT event_uuid, action, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s';
+        $access_args = array($patient_uuid);
+        if ($before !== '') {
+            $access_sql .= ' AND occurred_at <= %s';
+            $access_args[] = $before;
+        }
+        $access_sql .= ' ORDER BY occurred_at DESC, event_uuid DESC LIMIT ' . ($limit + 1);
+        foreach (CF01_DB::rows($access_sql, $access_args) as $row) {
+            $items[] = array('type' => 'access_event', 'uuid' => (string) $row['event_uuid'], 'status' => (string) $row['result'], 'action' => (string) $row['action'], 'occurred_at' => (string) $row['occurred_at'], 'row_version' => 1);
+        }
+        usort($items, static function (array $a, array $b): int {
+            $time = strcmp($b['occurred_at'], $a['occurred_at']);
+            return $time !== 0 ? $time : strcmp($b['uuid'], $a['uuid']);
+        });
+        $has_more = count($items) > $limit;
+        $items = array_slice($items, 0, $limit);
+        $next_cursor = '';
+        if ($has_more && $items) {
+            $last = $items[count($items) - 1];
+            $next_cursor = self::encode_timeline_cursor($patient_uuid, (string) $last['occurred_at'], (string) $last['uuid']);
+        }
         CF01_Audit::access($actor_id, $patient_uuid, 'ClinicalTimelineViewed', 'clinical_patient', $patient_uuid, 'clinical_care', 'success');
-        return array_slice($items, 0, $limit);
+        return array('items' => $items, 'next_cursor' => $next_cursor, 'has_more' => $has_more);
     }
 
-    private static function safe_row(array $row): array {
-        $blocked = array('cipher', 'signature', 'hash', 'token', 'reason', 'context', 'evidence', 'snapshot', 'content', 'order', 'payload', 'reference');
-        foreach (array_keys($row) as $key) {
-            foreach ($blocked as $word) {
-                if (str_contains(strtolower((string) $key), $word)) {
-                    unset($row[$key]);
-                    break;
-                }
-            }
+    private static function encode_timeline_cursor(string $patient_uuid, string $occurred_at, string $uuid): string {
+        $payload = rtrim(strtr(base64_encode(CF01_Crypto::canonical_json(array('patient_uuid' => $patient_uuid, 'occurred_at' => $occurred_at, 'uuid' => $uuid))), '+/', '-_'), '=');
+        $signature = hash_hmac('sha256', $payload, CF01_Crypto::key() ?? str_repeat("\0", 32));
+        return $payload . '.' . $signature;
+    }
+
+    private static function decode_timeline_cursor(string $cursor, string $patient_uuid): string {
+        if ($cursor === '') {
+            return '';
         }
-        return $row;
+        $parts = explode('.', $cursor, 2);
+        if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', $parts[0], CF01_Crypto::key() ?? str_repeat("\0", 32)), $parts[1])) {
+            throw new InvalidArgumentException('Timeline cursor is invalid.');
+        }
+        $encoded = strtr($parts[0], '-_', '+/');
+        $encoded .= str_repeat('=', (4 - strlen($encoded) % 4) % 4);
+        $decoded = base64_decode($encoded, true);
+        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
+        if (!is_array($payload) || !hash_equals($patient_uuid, (string) ($payload['patient_uuid'] ?? '')) || empty($payload['occurred_at'])) {
+            throw new InvalidArgumentException('Timeline cursor is invalid for this patient.');
+        }
+        return sanitize_text_field((string) $payload['occurred_at']);
+    }
+
+    private static function project_encounter_content(array $content, string $role): array {
+        if (in_array($role, array('doctor', 'supervisor'), true)) {
+            return $content;
+        }
+        $allowed = array('chief_complaints', 'onset', 'causes', 'modalities', 'concomitants', 'history', 'objective_findings', 'narrative', 'red_flags');
+        return array_intersect_key($content, array_flip($allowed));
+    }
+
+    private static function safe_row(array $row, string $entity): array {
+        $allow = array(
+            'encounters' => array('encounter_uuid','parent_encounter_uuid','encounter_type','mode','starts_at','ends_at','status','template_key','template_version','row_version','created_at','updated_at'),
+            'prescriptions' => array('prescription_uuid','encounter_uuid','parent_prescription_uuid','status','effective_from','effective_until','superseded_by_uuid','row_version','created_at','updated_at'),
+            'followups' => array('followup_uuid','prescription_uuid','status','due_at','overdue_at','reviewed_at','closed_at','row_version','created_at','updated_at'),
+            'consents' => array('consent_uuid','purpose','notice_version','status','granted_at','withdrawn_at','expires_at','row_version','created_at','updated_at'),
+        );
+        return array_intersect_key($row, array_flip($allow[$entity] ?? array()));
     }
 
     private static function private_headers(): array {

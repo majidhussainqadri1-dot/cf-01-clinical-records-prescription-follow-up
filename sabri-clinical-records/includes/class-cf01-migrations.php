@@ -124,7 +124,7 @@ final class CF01_Migrations {
 
     public static function reconciliation(array $expected): array {
         $actual = array();
-        foreach (array('patients', 'relationships', 'consents', 'encounters', 'prescriptions', 'followups', 'attachments') as $key) {
+        foreach (array('patients', 'relationships', 'consents', 'encounters', 'observations', 'attachments', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access', 'rights', 'breakglass', 'audit', 'outbox', 'retention', 'migrations', 'commands') as $key) {
             $row = CF01_DB::row('SELECT COUNT(*) AS total FROM ' . CF01_DB::table($key));
             $actual[$key] = (int) ($row['total'] ?? 0);
         }
@@ -153,6 +153,10 @@ final class CF01_Migrations {
         if (!hash_equals((string) $expected['expected_integrity_root'], (string) $actual['integrity_root']) || (array) $expected['expected_counts'] !== (array) $actual['counts'] || !empty($actual['deleted_record_resurrection'])) {
             throw new RuntimeException('Restore reconciliation failed or deleted records were resurrected.');
         }
+        $integrity = self::verify_signed_records();
+        if (!$integrity['passed']) {
+            throw new RuntimeException('Restore signature verification failed for one or more signed clinical records.');
+        }
         $receipt = array(
             'verified_at' => CF01_DB::now(),
             'backup_reference_hash' => hash('sha256', (string) $expected['backup_reference']),
@@ -161,10 +165,45 @@ final class CF01_Migrations {
             'key_recovery_passed' => true,
             'authorization_revalidated' => true,
             'deleted_record_resurrection' => false,
+            'signed_record_integrity' => $integrity,
         );
         self::record('restore_verification', 'completed', $receipt);
         CF01_Audit::record($actor_id, 'ClinicalRestoreVerified', 'clinical_runtime', 'cf01', 'resilience', array('integrity_root' => $actual['integrity_root']));
         return $receipt;
+    }
+
+
+
+    private static function verify_signed_records(): array {
+        $checked = array('encounters' => 0, 'prescriptions' => 0);
+        $failures = array();
+        $encounters = CF01_DB::rows(
+            'SELECT * FROM ' . CF01_DB::table('encounters') . ' WHERE status IN (%s,%s) ORDER BY id ASC LIMIT 10001',
+            array('signed', 'addended')
+        );
+        if (count($encounters) > 10000) {
+            throw new RuntimeException('Signed encounter integrity verification must use the approved paginated restore job.');
+        }
+        foreach ($encounters as $row) {
+            $checked['encounters']++;
+            if (!CF01_Encounters::verify_integrity($row)) {
+                $failures[] = array('type' => 'encounter', 'uuid_hash' => hash('sha256', (string) $row['encounter_uuid']));
+            }
+        }
+        $prescriptions = CF01_DB::rows(
+            'SELECT * FROM ' . CF01_DB::table('prescriptions') . ' WHERE status IN (%s,%s,%s,%s) ORDER BY id ASC LIMIT 10001',
+            array('signed', 'superseded', 'discontinued', 'expired')
+        );
+        if (count($prescriptions) > 10000) {
+            throw new RuntimeException('Signed prescription integrity verification must use the approved paginated restore job.');
+        }
+        foreach ($prescriptions as $row) {
+            $checked['prescriptions']++;
+            if (!CF01_Prescriptions::verify_integrity($row)) {
+                $failures[] = array('type' => 'prescription', 'uuid_hash' => hash('sha256', (string) $row['prescription_uuid']));
+            }
+        }
+        return array('passed' => !$failures, 'checked' => $checked, 'failures' => $failures);
     }
 
     public static function rollback(int $actor_id, string $migration_uuid, string $reason): array {

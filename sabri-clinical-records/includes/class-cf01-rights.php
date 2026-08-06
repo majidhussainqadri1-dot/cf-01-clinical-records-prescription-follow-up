@@ -24,6 +24,7 @@ final class CF01_Rights {
         }
         CF01_Patients::get($patient_uuid);
         CF01_Authorization::actor($actor_id, 'request_clinical_right');
+        CF01_Authorization::enforce_rate_limit($actor_id, 'rights_' . $type, $patient_uuid, 5, DAY_IN_SECONDS);
         if (!CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
             self::guardian_or_representative($actor_id, $patient_uuid, $request);
         }
@@ -123,7 +124,8 @@ final class CF01_Rights {
         if (!CF01_Authorization::patient_owner($actor_id, (string) $row['patient_uuid'])) {
             throw new RuntimeException('Export is unavailable.');
         }
-        CF01_Authorization::actor($actor_id, 'export_record');
+        CF01_Authorization::actor($actor_id, 'consume_clinical_export');
+        CF01_Authorization::enforce_rate_limit($actor_id, 'consume_export', (string) $row['patient_uuid'], 10, 15 * MINUTE_IN_SECONDS);
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') !== 'fulfilled' || empty($row['export_token_hash']) || !hash_equals((string) $row['export_token_hash'], hash('sha256', $token))) {
             throw new RuntimeException('Export is unavailable.');
@@ -186,6 +188,7 @@ final class CF01_Rights {
             throw new RuntimeException('Export is unavailable.');
         }
         CF01_Authorization::actor($actor_id, 'export_record');
+        CF01_Authorization::enforce_rate_limit($actor_id, 'build_export', $patient_uuid, 3, HOUR_IN_SECONDS);
         return self::build_export_manifest($patient_uuid, $scope, 'patient_self_service');
     }
 
@@ -206,7 +209,7 @@ final class CF01_Rights {
     }
 
     private static function build_export_manifest(string $patient_uuid, array $scope, string $authority): array {
-        $allowed = array_values(array_unique(array_intersect(array_map('sanitize_key', $scope), array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access_history'))));
+        $allowed = array_values(array_unique(array_intersect(array_map('sanitize_key', $scope), array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'attachments', 'access_history'))));
         if (!$allowed) {
             throw new InvalidArgumentException('At least one export scope is required.');
         }
@@ -219,7 +222,7 @@ final class CF01_Rights {
             'generated_at' => CF01_DB::now(),
             'records' => array(),
         );
-        foreach (array('consents','encounters','observations','assessments','prescriptions','followups','outcomes') as $key) {
+        foreach (array('consents','encounters','observations','assessments','prescriptions','followups','outcomes','attachments') as $key) {
             if (in_array($key, $allowed, true)) {
                 $rows = self::bounded_rows($key, $patient_uuid, 10000);
                 $manifest['records'][$key] = array_map(static fn(array $row): array => self::export_row($key, $row), $rows);
@@ -262,6 +265,7 @@ final class CF01_Rights {
             'prescriptions' => array('order_cipher' => array('order', 'prescription-order'), 'snapshot_cipher' => array('signed_snapshot', 'prescription-snapshot'), 'discontinuation_reason_cipher' => array('discontinuation_reason', 'prescription-discontinuation')),
             'followups' => array('questionnaire_cipher' => array('questionnaire', 'followup-questionnaire'), 'plan_cipher' => array('plan', 'followup-plan'), 'reschedule_reason_cipher' => array('reschedule_reason', 'followup-reschedule'), 'closure_reason_cipher' => array('closure_reason', 'followup-closure')),
             'outcomes' => array('response_cipher' => array('response', 'patient-outcome'), 'review_cipher' => array('review', 'outcome-review')),
+            'attachments' => array('source_cipher' => array('source', 'attachment-source')),
         );
         foreach ($maps[$entity] ?? array() as $cipher => $definition) {
             if (!empty($row[$cipher])) {
@@ -269,6 +273,7 @@ final class CF01_Rights {
             }
             unset($row[$cipher]);
         }
+        unset($row['asset_reference_cipher'], $row['scanner_evidence_cipher']);
         foreach (array_keys($row) as $field) {
             if ($field === 'id' || str_ends_with($field, '_hash') || str_ends_with($field, '_signature')) {
                 unset($row[$field]);
@@ -314,19 +319,9 @@ final class CF01_Rights {
     }
 
     private static function guardian_or_representative(int $actor_id, string $patient_uuid, array $request): void {
-        $patient = CF01_Patients::get($patient_uuid);
-        $guardian = CF01_Patients::guardian_context($patient);
-        $membership = CF01_Contracts::membership($actor_id);
-        $same_actor = !empty($membership['valid'])
-            && !empty($membership['approved'])
-            && empty($membership['suspended'])
-            && !empty($guardian['platform_uuid'])
-            && hash_equals((string) $guardian['platform_uuid'], (string) ($membership['platform_uuid'] ?? ''));
-        if (($guardian['status'] ?? '') !== 'verified' || !$same_actor) {
-            throw new RuntimeException('Verified representative authority is required.');
-        }
+        $context = CF01_Role_Context::resolve($actor_id, $patient_uuid, 'clinical_rights', 'guardian');
         $reference = (string) ($request['representative_reference'] ?? '');
-        if ($reference !== '' && !empty($guardian['reference']) && !hash_equals((string) $guardian['reference'], $reference)) {
+        if ($reference !== '' && !empty($context['guardian_reference']) && !hash_equals((string) $context['guardian_reference'], $reference)) {
             throw new RuntimeException('Representative evidence does not match current verified authority.');
         }
     }

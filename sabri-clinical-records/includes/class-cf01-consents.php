@@ -6,7 +6,7 @@ final class CF01_Consents {
 
     public static function record(int $actor_id, string $patient_uuid, string $purpose, string $status, array $evidence): array {
         $patient = CF01_Patients::get($patient_uuid);
-        self::authorize_subject($actor_id, $patient_uuid, $patient, $evidence);
+        $authority = self::authorize_subject($actor_id, $patient_uuid, $patient, $purpose, $evidence);
         if (!in_array($purpose, self::PURPOSES, true)) {
             throw new InvalidArgumentException('Unsupported consent purpose.');
         }
@@ -19,7 +19,7 @@ final class CF01_Consents {
         if (empty($evidence['notice_version']) || empty($evidence['subject_platform_uuid'])) {
             throw new InvalidArgumentException('Consent notice and subject evidence are required.');
         }
-        self::validate_subject_identity($patient, (string) $evidence['subject_platform_uuid']);
+        self::validate_subject_identity($actor_id, $patient_uuid, $purpose, $patient, (string) $evidence['subject_platform_uuid'], $authority);
         $demographics = CF01_Patients::demographics($patient);
         $is_minor = self::is_legal_minor($patient_uuid, $demographics);
         if ($is_minor) {
@@ -57,7 +57,7 @@ final class CF01_Consents {
     public static function withdraw(int $actor_id, string $consent_uuid, string $reason, int $expected_version): array {
         $row = self::get($consent_uuid);
         $patient = CF01_Patients::get((string) $row['patient_uuid']);
-        self::authorize_subject($actor_id, (string) $row['patient_uuid'], $patient, array());
+        self::authorize_subject($actor_id, (string) $row['patient_uuid'], $patient, (string) $row['purpose'], array());
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') !== 'granted') {
             throw new RuntimeException('Only an active consent may be withdrawn.');
@@ -96,51 +96,64 @@ final class CF01_Consents {
         }
     }
 
-    private static function authorize_subject(int $actor_id, string $patient_uuid, array $patient, array $evidence): void {
+    private static function authorize_subject(int $actor_id, string $patient_uuid, array $patient, string $purpose, array $evidence): array {
         if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
-            CF01_Authorization::actor($actor_id, 'record_own_consent');
-            return;
+            CF01_Authorization::actor($actor_id, 'record_own_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
+            return array('role' => 'patient');
         }
-        $guardian = CF01_Patients::guardian_context($patient);
-        $membership = CF01_Contracts::membership($actor_id);
-        $guardian_actor = !empty($membership['valid'])
-            && !empty($membership['approved'])
-            && empty($membership['suspended'])
-            && !empty($guardian['platform_uuid'])
-            && hash_equals((string) $guardian['platform_uuid'], (string) ($membership['platform_uuid'] ?? ''));
-        if (($guardian['status'] ?? '') === 'verified' && $guardian_actor) {
+        try {
+            $context = CF01_Role_Context::resolve($actor_id, $patient_uuid, $purpose, 'guardian');
             $presented_reference = (string) ($evidence['guardian']['reference'] ?? '');
-            if ($presented_reference !== '' && !empty($guardian['reference']) && !hash_equals((string) $guardian['reference'], $presented_reference)) {
+            if ($presented_reference !== '' && !empty($context['guardian_reference']) && !hash_equals((string) $context['guardian_reference'], $presented_reference)) {
                 throw new RuntimeException('Guardian evidence does not match current verified authority.');
             }
-            CF01_Authorization::actor($actor_id, 'record_own_consent');
-            return;
+            CF01_Authorization::actor($actor_id, 'record_own_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
+            return $context;
+        } catch (Throwable $guardian_error) {
+            CF01_Authorization::clinician($actor_id, 'record_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
+            CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care', 'record_consent');
+            $guardian_actor_id = (int) ($evidence['guardian']['actor_user_id'] ?? 0);
+            $reference = (string) ($evidence['guardian']['reference'] ?? '');
+            if (self::is_legal_minor($patient_uuid, CF01_Patients::demographics($patient))) {
+                $assertion = $guardian_actor_id > 0 ? CF01_Contracts::guardian_authority($guardian_actor_id, $patient_uuid, $purpose, $reference) : array('valid' => false);
+                if (empty($assertion['valid'])) {
+                    throw new RuntimeException('Current guardian authority evidence is required for clinician-recorded minor consent.');
+                }
+            }
+            return array('role' => 'doctor');
         }
-        CF01_Authorization::clinician($actor_id, 'record_consent');
-        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
     }
 
-    private static function validate_subject_identity(array $patient, string $subject_platform_uuid): void {
+    private static function validate_subject_identity(int $actor_id, string $patient_uuid, string $purpose, array $patient, string $subject_platform_uuid, array $authority): void {
         $patient_platform_uuid = CF01_Crypto::decrypt((string) ($patient['platform_subject_cipher'] ?? ''), 'patient-platform-link');
         $guardian = CF01_Patients::guardian_context($patient);
         $guardian_platform_uuid = (string) ($guardian['platform_uuid'] ?? '');
         $matches_patient = is_string($patient_platform_uuid) && $patient_platform_uuid !== '' && hash_equals($patient_platform_uuid, $subject_platform_uuid);
-        $matches_guardian = ($guardian['status'] ?? '') === 'verified' && $guardian_platform_uuid !== '' && hash_equals($guardian_platform_uuid, $subject_platform_uuid);
+        $matches_guardian = ($authority['role'] ?? '') === 'guardian'
+            && ($guardian['status'] ?? '') === 'verified'
+            && $guardian_platform_uuid !== ''
+            && hash_equals($guardian_platform_uuid, $subject_platform_uuid);
         if (!$matches_patient && !$matches_guardian) {
-            throw new RuntimeException('Consent subject does not match the patient or verified guardian.');
+            throw new RuntimeException('Consent subject does not match the patient or current verified guardian.');
+        }
+        if ($matches_guardian) {
+            $assertion = CF01_Contracts::guardian_authority($actor_id, $patient_uuid, $purpose, (string) ($guardian['reference'] ?? ''));
+            if (empty($assertion['valid'])) {
+                throw new RuntimeException('Guardian authority is no longer current.');
+            }
         }
     }
 
     private static function is_legal_minor(string $patient_uuid, array $demographics): bool {
         $date_of_birth = trim((string) ($demographics['date_of_birth'] ?? ''));
         if ($date_of_birth === '') {
-            return false;
+            throw new RuntimeException('Clinical age evidence is unavailable.');
         }
         try {
             $birth = new DateTimeImmutable($date_of_birth, new DateTimeZone('UTC'));
             $today = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         } catch (Throwable $error) {
-            return false;
+            throw new RuntimeException('Clinical age evidence is invalid.');
         }
         $majority_age = (int) apply_filters('cf01_legal_majority_age', 18, $patient_uuid, $demographics);
         $majority_age = max(12, min(25, $majority_age));

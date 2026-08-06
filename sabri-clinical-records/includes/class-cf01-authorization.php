@@ -3,9 +3,11 @@ defined('ABSPATH') || exit;
 
 final class CF01_Authorization {
     private const HIGH_RISK = array(
-        'sign_encounter', 'sign_prescription', 'export_record', 'grant_break_glass',
-        'release_hold', 'place_hold', 'purge_record', 'merge_patient', 'activate_module',
-        'review_break_glass', 'revoke_break_glass', 'decide_clinical_right', 'fulfill_clinical_export',
+        'sign_encounter', 'sign_prescription', 'add_encounter_addendum', 'mark_encounter_entered_in_error',
+        'export_record', 'consume_clinical_export', 'grant_break_glass', 'release_hold', 'place_hold',
+        'purge_record', 'merge_patient', 'link_platform_identity', 'update_guardian_context',
+        'activate_module', 'review_break_glass', 'revoke_break_glass', 'decide_clinical_right',
+        'fulfill_clinical_export', 'review_attachment', 'relink_attachment',
         'run_clinical_migration', 'run_clinical_rollback', 'disable_module'
     );
 
@@ -65,7 +67,9 @@ final class CF01_Authorization {
         return $context;
     }
 
-    public static function relationship(string $clinical_patient_uuid, int $doctor_user_id, string $purpose): array {
+    public static function relationship(string $clinical_patient_uuid, int $doctor_user_id, string $purpose, string $action = 'clinical_care'): array {
+        $purpose = sanitize_key($purpose);
+        $action = sanitize_key($action);
         $row = CF01_DB::row(
             'SELECT * FROM ' . CF01_DB::table('relationships') . ' WHERE patient_uuid = %s AND doctor_user_id = %d AND status = %s AND purpose = %s ORDER BY id DESC LIMIT 1',
             array($clinical_patient_uuid, $doctor_user_id, 'active', $purpose)
@@ -73,13 +77,30 @@ final class CF01_Authorization {
         if (!$row) {
             throw new RuntimeException('An active treating relationship is required.');
         }
-        $now = time();
-        $starts_at = self::utc_timestamp((string) ($row['starts_at'] ?? ''));
-        $ends_at = self::utc_timestamp((string) ($row['ends_at'] ?? ''));
-        if ($starts_at === null || $starts_at > $now || ($ends_at !== null && $ends_at <= $now)) {
-            throw new RuntimeException('An active treating relationship is required.');
-        }
+        self::validate_relationship_window($row);
+        self::validate_relationship_scope($row, $purpose, $action);
         return $row;
+    }
+
+    public static function relationship_for_record(string $clinical_patient_uuid, int $doctor_user_id, string $purpose, string $relationship_uuid, string $action): array {
+        $relationship_uuid = trim($relationship_uuid);
+        if ($relationship_uuid === '') {
+            throw new RuntimeException('Clinical record is missing its treating relationship reference.');
+        }
+        $row = CF01_DB::row(
+            'SELECT * FROM ' . CF01_DB::table('relationships') . ' WHERE relationship_uuid = %s AND patient_uuid = %s AND doctor_user_id = %d AND status = %s AND purpose = %s LIMIT 1',
+            array($relationship_uuid, $clinical_patient_uuid, $doctor_user_id, 'active', sanitize_key($purpose))
+        );
+        if (!$row) {
+            throw new RuntimeException('This clinical record is not within the actor’s current treating relationship.');
+        }
+        self::validate_relationship_window($row);
+        self::validate_relationship_scope($row, sanitize_key($purpose), sanitize_key($action));
+        return $row;
+    }
+
+    public static function patient_context(int $actor_id, string $patient_uuid, string $purpose = 'clinical_care', string $requested_role = ''): array {
+        return CF01_Role_Context::resolve($actor_id, $patient_uuid, $purpose, $requested_role);
     }
 
     public static function consent(string $clinical_patient_uuid, string $purpose): array {
@@ -99,8 +120,8 @@ final class CF01_Authorization {
 
     public static function fields(string $role, string $purpose, array $requested, array $record): array {
         $policy = array(
-            'patient' => array('summary', 'encounters', 'prescriptions', 'followups', 'consents', 'access_history'),
-            'guardian' => array('summary', 'encounters', 'prescriptions', 'followups', 'consents'),
+            'patient' => array('summary', 'encounters', 'attachments', 'prescriptions', 'followups', 'consents', 'access_history'),
+            'guardian' => array('summary', 'encounters', 'attachments', 'prescriptions', 'followups', 'consents', 'access_history'),
             'assistant' => array('summary', 'intake', 'observations', 'tasks'),
             'doctor' => array('summary', 'intake', 'totality', 'encounters', 'observations', 'attachments', 'assessments', 'prescriptions', 'followups'),
             'supervisor' => array('summary', 'encounters', 'assessments', 'prescriptions', 'followups', 'quality'),
@@ -121,10 +142,23 @@ final class CF01_Authorization {
         }
         $subject_hash = CF01_Crypto::blind_index((string) $membership['platform_uuid'], 'platform-subject');
         $row = CF01_DB::row(
-            'SELECT clinical_uuid FROM ' . CF01_DB::table('patients') . ' WHERE clinical_uuid = %s AND platform_subject_hash = %s AND status <> %s LIMIT 1',
-            array($clinical_patient_uuid, $subject_hash, 'merged')
+            'SELECT clinical_uuid FROM ' . CF01_DB::table('patients') . ' WHERE clinical_uuid = %s AND platform_subject_hash = %s AND status NOT IN (%s,%s) LIMIT 1',
+            array($clinical_patient_uuid, $subject_hash, 'merged', 'quarantined')
         );
         return $row !== null;
+    }
+
+    public static function enforce_rate_limit(int $user_id, string $operation, string $subject_uuid, int $limit, int $window_seconds): void {
+        $limit = max(1, $limit);
+        $window_seconds = max(60, $window_seconds);
+        $bucket = (int) floor(time() / $window_seconds);
+        $key = 'cf01_rl_' . hash('sha256', $user_id . '|' . sanitize_key($operation) . '|' . $subject_uuid . '|' . $bucket);
+        $count = (int) get_transient($key);
+        if ($count >= $limit) {
+            CF01_Audit::denied($user_id, 'ClinicalRateLimitExceeded', 'clinical_subject', $subject_uuid, 'abuse_prevention', sanitize_key($operation));
+            throw new RuntimeException('Clinical action rate limit exceeded; retry after the bounded window.');
+        }
+        set_transient($key, $count + 1, $window_seconds + 60);
     }
 
     public static function not_expired(string $utc): bool {
@@ -138,10 +172,32 @@ final class CF01_Authorization {
         }
     }
 
+    private static function validate_relationship_window(array $row): void {
+        $now = time();
+        $starts_at = self::utc_timestamp((string) ($row['starts_at'] ?? ''));
+        $ends_at = self::utc_timestamp((string) ($row['ends_at'] ?? ''));
+        if ($starts_at === null || $starts_at > $now || ($ends_at !== null && $ends_at <= $now)) {
+            throw new RuntimeException('An active treating relationship is required.');
+        }
+    }
+
+    private static function validate_relationship_scope(array $row, string $purpose, string $action): void {
+        $scope = json_decode((string) ($row['scope_json'] ?? ''), true);
+        if (!is_array($scope) || !$scope) {
+            throw new RuntimeException('Treating relationship scope is missing or invalid.');
+        }
+        $scope = array_values(array_unique(array_map('sanitize_key', $scope)));
+        $accepted = array_unique(array_filter(array($purpose, $action, 'care', 'clinical_care')));
+        if (!array_intersect($scope, $accepted)) {
+            throw new RuntimeException('Treating relationship scope does not authorize this clinical action.');
+        }
+    }
+
     private static function capability_allowed(int $user_id, string $action, array $context): bool {
         $patient_actions = array(
             'view_own_clinical_record', 'view_own_clinical_timeline', 'submit_patient_outcome',
-            'request_clinical_right', 'record_own_consent', 'view_own_access_history', 'export_record'
+            'request_clinical_right', 'record_own_consent', 'view_own_access_history', 'export_record',
+            'consume_clinical_export'
         );
         $capability_map = array(
             'activate_module' => 'cf01_activate_clinical',
