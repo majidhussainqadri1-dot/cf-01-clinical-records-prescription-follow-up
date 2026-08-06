@@ -22,60 +22,32 @@ jobs:
           persist-credentials: true
       - name: Correct native-owner relationship source discovery
         shell: bash
+        env:
+          CONTRACTS_OLD: "ICAgICAgICAkcmVmZXJlbmNlID0gc2FuaXRpemVfdGV4dF9maWVsZCgkcmVmZXJlbmNlKTsKICAgICAgICBpZiAoJHJlZmVyZW5jZSA9PT0gJycpIHsKICAgICAgICAgICAgcmV0dXJuIGFycmF5KCd2YWxpZCcgPT4gZmFsc2UsICdjb2RlJyA9PiAncmVsYXRpb25zaGlwX3NvdXJjZV9taXNzaW5nJyk7CiAgICAgICAgfQogICAgICAgICRyZXN1bHQgPSBhcHBseV9maWx0ZXJzKCdjZjAxX3JlbGF0aW9uc2hpcF9zb3VyY2VfYXNzZXJ0aW9uJywgbnVsbCwgJHJlZmVyZW5jZSwgJGFjdG9yX2lkLCAkcGF0aWVudF91dWlkLCAkZG9jdG9yX3VzZXJfaWQsIHNhbml0aXplX2tleSgkcHVycG9zZSksICRzY29wZSk7CiAgICAgICAgaWYgKCFpc19hcnJheSgkcmVzdWx0KSkgewo="
+          CONTRACTS_NEW: "ICAgICAgICAkcmVmZXJlbmNlID0gc2FuaXRpemVfdGV4dF9maWVsZCgkcmVmZXJlbmNlKTsKICAgICAgICAkcmVzdWx0ID0gYXBwbHlfZmlsdGVycygnY2YwMV9yZWxhdGlvbnNoaXBfc291cmNlX2Fzc2VydGlvbicsIG51bGwsICRyZWZlcmVuY2UsICRhY3Rvcl9pZCwgJHBhdGllbnRfdXVpZCwgJGRvY3Rvcl91c2VyX2lkLCBzYW5pdGl6ZV9rZXkoJHB1cnBvc2UpLCAkc2NvcGUpOwogICAgICAgIGlmICgkcmVmZXJlbmNlID09PSAnJyAmJiBpc19hcnJheSgkcmVzdWx0KSkgewogICAgICAgICAgICAkcmVmZXJlbmNlID0gc2FuaXRpemVfdGV4dF9maWVsZCgoc3RyaW5nKSAoJHJlc3VsdFsnc291cmNlX3JlZmVyZW5jZSddID8/ICcnKSk7CiAgICAgICAgfQogICAgICAgIGlmICghaXNfYXJyYXkoJHJlc3VsdCkgJiYgJHJlZmVyZW5jZSAhPT0gJycpIHsK"
+          RELATIONSHIPS_OLD: "ICAgICAgICBpZiAoZW1wdHkoJHNvdXJjZVsndmFsaWQnXSkpIHsKICAgICAgICAgICAgdGhyb3cgbmV3IFJ1bnRpbWVFeGNlcHRpb24oJ0EgY3VycmVudCBuYXRpdmUtb3duZXIgcmVsYXRpb25zaGlwIHNvdXJjZSBhc3NlcnRpb24gaXMgcmVxdWlyZWQuJyk7CiAgICAgICAgfQogICAgICAgICRyZWxhdGlvbnNoaXBfdXVpZCA9IENGMDFfREI6OnV1aWQoKTsK"
+          RELATIONSHIPS_NEW: "ICAgICAgICBpZiAoZW1wdHkoJHNvdXJjZVsndmFsaWQnXSkpIHsKICAgICAgICAgICAgdGhyb3cgbmV3IFJ1bnRpbWVFeGNlcHRpb24oJ0EgY3VycmVudCBuYXRpdmUtb3duZXIgcmVsYXRpb25zaGlwIHNvdXJjZSBhc3NlcnRpb24gaXMgcmVxdWlyZWQuJyk7CiAgICAgICAgfQogICAgICAgICRzb3VyY2VfcmVmZXJlbmNlID0gc2FuaXRpemVfdGV4dF9maWVsZCgoc3RyaW5nKSAkc291cmNlWydzb3VyY2VfcmVmZXJlbmNlJ10pOwogICAgICAgICRyZWxhdGlvbnNoaXBfdXVpZCA9IENGMDFfREI6OnV1aWQoKTsK"
+          BOOTSTRAP_OLD: "YWRkX2ZpbHRlcignY2YwMV9yZWxhdGlvbnNoaXBfc291cmNlX2Fzc2VydGlvbicsIGZ1bmN0aW9uICgkcmVzdWx0LCBzdHJpbmcgJHJlZmVyZW5jZSwgaW50ICRhY3Rvcl9pZCwgc3RyaW5nICRwYXRpZW50X3V1aWQsIGludCAkZG9jdG9yX3VzZXJfaWQsIHN0cmluZyAkcHVycG9zZSwgYXJyYXkgJHNjb3BlKTogYXJyYXkgewogICAgcmV0dXJuIGFycmF5KAo="
+          BOOTSTRAP_NEW: "YWRkX2ZpbHRlcignY2YwMV9yZWxhdGlvbnNoaXBfc291cmNlX2Fzc2VydGlvbicsIGZ1bmN0aW9uICgkcmVzdWx0LCBzdHJpbmcgJHJlZmVyZW5jZSwgaW50ICRhY3Rvcl9pZCwgc3RyaW5nICRwYXRpZW50X3V1aWQsIGludCAkZG9jdG9yX3VzZXJfaWQsIHN0cmluZyAkcHVycG9zZSwgYXJyYXkgJHNjb3BlKTogYXJyYXkgewogICAgJHJlZmVyZW5jZSA9ICRyZWZlcmVuY2UgIT09ICcnID8gJHJlZmVyZW5jZSA6ICdyZWxhdGlvbnNoaXAtc291cmNlLXRlc3QtJyAuICRwYXRpZW50X3V1aWQ7CiAgICByZXR1cm4gYXJyYXkoCg=="
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import base64
+          import os
           from pathlib import Path
-
-          contracts = Path('sabri-clinical-records/includes/class-cf01-contracts.php')
-          text = contracts.read_text()
-          old = """        $reference = sanitize_text_field($reference);
-        if ($reference === '') {
-            return array('valid' => false, 'code' => 'relationship_source_missing');
-        }
-        $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
-        if (!is_array($result)) {
-"""
-          new = """        $reference = sanitize_text_field($reference);
-        $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
-        if ($reference === '' && is_array($result)) {
-            $reference = sanitize_text_field((string) ($result['source_reference'] ?? ''));
-        }
-        if (!is_array($result) && $reference !== '') {
-"""
-          if old not in text:
-              raise SystemExit('relationship source block not found')
-          contracts.write_text(text.replace(old, new, 1))
-
-          relationships = Path('sabri-clinical-records/includes/class-cf01-relationships.php')
-          text = relationships.read_text()
-          old = """        if (empty($source['valid'])) {
-            throw new RuntimeException('A current native-owner relationship source assertion is required.');
-        }
-        $relationship_uuid = CF01_DB::uuid();
-"""
-          new = """        if (empty($source['valid'])) {
-            throw new RuntimeException('A current native-owner relationship source assertion is required.');
-        }
-        $source_reference = sanitize_text_field((string) $source['source_reference']);
-        $relationship_uuid = CF01_DB::uuid();
-"""
-          if old not in text:
-              raise SystemExit('relationship persistence block not found')
-          relationships.write_text(text.replace(old, new, 1))
-
-          bootstrap = Path('tests/bootstrap.php')
-          text = bootstrap.read_text()
-          old = """add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
-    return array(
-"""
-          new = """add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
-    $reference = $reference !== '' ? $reference : 'relationship-source-test-' . $patient_uuid;
-    return array(
-"""
-          if old not in text:
-              raise SystemExit('test relationship provider block not found')
-          bootstrap.write_text(text.replace(old, new, 1))
+          replacements = [
+              ('sabri-clinical-records/includes/class-cf01-contracts.php', 'CONTRACTS_OLD', 'CONTRACTS_NEW'),
+              ('sabri-clinical-records/includes/class-cf01-relationships.php', 'RELATIONSHIPS_OLD', 'RELATIONSHIPS_NEW'),
+              ('tests/bootstrap.php', 'BOOTSTRAP_OLD', 'BOOTSTRAP_NEW'),
+          ]
+          for filename, old_key, new_key in replacements:
+              path = Path(filename)
+              text = path.read_text()
+              old = base64.b64decode(os.environ[old_key]).decode()
+              new = base64.b64decode(os.environ[new_key]).decode()
+              if old not in text:
+                  raise SystemExit(f'replacement marker missing: {filename}')
+              path.write_text(text.replace(old, new, 1))
           PY
           rm -f .github/workflows/cf01-relationship-source-materialize.yml
           find sabri-clinical-records tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
