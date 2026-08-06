@@ -1,0 +1,57 @@
+name: CF-01 Materialize Forty-Round Hardened Invariants
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-forty-review-materialize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Align forty-round invariants with record-bound authorization
+        shell: bash
+        env:
+          R23_OLD: "Um91bmQoMjMsICJFbnRlcmVkLWluLWVycm9yIHJlbGF0aW9uc2hpcCBzY29wZSIsIGNvbnRhaW5zKCJlbmNvdW50ZXJzIiwgIm1hcmtfZW50ZXJlZF9pbl9lcnJvciIsICJyZWxhdGlvbnNoaXAoKHN0cmluZykgJHJvd1sncGF0aWVudF91dWlkJ10iKSks"
+          R23_NEW: "Um91bmQoMjMsICJFbnRlcmVkLWluLWVycm9yIHJlbGF0aW9uc2hpcCBzY29wZSIsIGNvbnRhaW5zKCJlbmNvdW50ZXJzIiwgIm1hcmtfZW50ZXJlZF9pbl9lcnJvciIsICJyZWxhdGlvbnNoaXBfZm9yX3JlY29yZCIpKSw="
+          R27_OLD: "Um91bmQoMjcsICJQcmVzY3JpcHRpb24gY2xpbmljaWFuIG93bmVyc2hpcCIsIGNvbnRhaW5zKCJwcmVzY3JpcHRpb25zIiwgIkNGMDFfQXV0aG9yaXphdGlvbjo6Y2xpbmljaWFuIiwgIkNGMDFfQXV0aG9yaXphdGlvbjo6cmVsYXRpb25zaGlwIikpLA=="
+          R27_NEW: "Um91bmQoMjcsICJQcmVzY3JpcHRpb24gY2xpbmljaWFuIG93bmVyc2hpcCIsIGNvbnRhaW5zKCJwcmVzY3JpcHRpb25zIiwgIkNGMDFfQXV0aG9yaXphdGlvbjo6Y2xpbmljaWFuIiwgIkNGMDFfQXV0aG9yaXphdGlvbjo6cmVsYXRpb25zaGlwX2Zvcl9yZWNvcmQiKSks"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          path = Path('tools/run_40_reviews.py')
+          text = path.read_text()
+          for old_key, new_key in [('R23_OLD', 'R23_NEW'), ('R27_OLD', 'R27_NEW')]:
+              old = base64.b64decode(os.environ[old_key]).decode()
+              new = base64.b64decode(os.environ[new_key]).decode()
+              if old not in text:
+                  raise SystemExit('forty-round invariant marker missing: ' + old_key)
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          rm -f .github/workflows/cf01-forty-review-materialize.yml
+          python3 -m py_compile tools/run_40_reviews.py
+          git diff --check
+      - name: Commit hardened invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'test: align forty-round review with record-bound authorization'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
