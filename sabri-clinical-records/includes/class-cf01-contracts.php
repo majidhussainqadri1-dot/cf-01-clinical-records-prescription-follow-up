@@ -154,11 +154,11 @@ final class CF01_Contracts {
 
     public static function relationship_source(string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
         $reference = sanitize_text_field($reference);
-        if ($reference === '') {
-            return array('valid' => false, 'code' => 'relationship_source_missing');
-        }
         $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
-        if (!is_array($result)) {
+        if ($reference === '' && is_array($result)) {
+            $reference = sanitize_text_field((string) ($result['source_reference'] ?? ''));
+        }
+        if (!is_array($result) && $reference !== '') {
             $care = self::care_context($reference, $actor_id);
             $patient = CF01_Patients::get($patient_uuid);
             $patient_platform_uuid = CF01_Crypto::decrypt((string) ($patient['platform_subject_cipher'] ?? ''), 'patient-platform-link');

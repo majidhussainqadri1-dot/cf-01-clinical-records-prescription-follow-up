@@ -32,6 +32,7 @@ final class CF01_Relationships {
         if (empty($source['valid'])) {
             throw new RuntimeException('A current native-owner relationship source assertion is required.');
         }
+        $source_reference = sanitize_text_field((string) $source['source_reference']);
         $relationship_uuid = CF01_DB::uuid();
         CF01_DB::insert('relationships', array(
             'relationship_uuid' => $relationship_uuid,

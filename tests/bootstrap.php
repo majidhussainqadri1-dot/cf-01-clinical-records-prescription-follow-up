@@ -270,6 +270,7 @@ add_filter('cf01_subject_identity_assertion', function ($result, string $platfor
     );
 }, 10, 4);
 add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
+    $reference = $reference !== '' ? $reference : 'relationship-source-test-' . $patient_uuid;
     return array(
         'contract_version' => '1.0.0', 'accepted' => true, 'revoked' => false,
         'source_reference' => $reference, 'patient_uuid' => $patient_uuid,
