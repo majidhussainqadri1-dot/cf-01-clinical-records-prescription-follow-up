@@ -1,0 +1,53 @@
+name: CF-01 Materialize Relationship Authorization Regression
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-relationship-auth-test-materialize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Correct relationship authorization regression
+        shell: bash
+        env:
+          TEST_OLD: "JHBhc3MoZnVuY3Rpb24gKCkgdXNlICgkcGF0aWVudCk6IHZvaWQgewogICAgJEdMT0JBTFNbJ3dwZGInXS0+aW5zZXJ0KENGMDFfREI6OnRhYmxlKCdyZWxhdGlvbnNoaXBzJyksIGFycmF5KCdyZWxhdGlvbnNoaXBfdXVpZCc9PkNGMDFfREI6OnV1aWQoKSwncGF0aWVudF91dWlkJz0+JHBhdGllbnRbJ2NsaW5pY2FsX3V1aWQnXSwnZG9jdG9yX3VzZXJfaWQnPT4yLCdwdXJwb3NlJz0+J2NsaW5pY2FsX2NhcmUnLCdzY29wZV9qc29uJz0+J1tdJywnc3RhdHVzJz0+J3Byb3Bvc2VkJywncm93X3ZlcnNpb24nPT4xLCdjcmVhdGVkX2F0Jz0+Q0YwMV9EQjo6bm93KCksJ3VwZGF0ZWRfYXQnPT5DRjAxX0RCOjpub3coKSkpOwogICAgJHJvd3MgPSBhcnJheV92YWx1ZXMoJEdMT0JBTFNbJ3dwZGInXS0+dGFibGVzW0NGMDFfREI6OnRhYmxlKCdyZWxhdGlvbnNoaXBzJyldKTsKICAgICRsYXN0ID0gZW5kKCRyb3dzKTsKICAgIGNmMDFfZXhwZWN0X2V4Y2VwdGlvbihmbigpID0+IENGMDFfUmVsYXRpb25zaGlwczo6YWN0aXZhdGUoMywgJGxhc3RbJ3JlbGF0aW9uc2hpcF91dWlkJ10sIDEpLCAncmVsYXRpb25zaGlwJyk7Cn0sICdyZWxhdGlvbnNoaXAgYWN0aXZhdGlvbiBhdXRob3JpemF0aW9uJyk7Cg=="
+          TEST_NEW: "JHBhc3MoZnVuY3Rpb24gKCkgdXNlICgkcGF0aWVudCk6IHZvaWQgewogICAgJEdMT0JBTFNbJ3dwZGInXS0+aW5zZXJ0KENGMDFfREI6OnRhYmxlKCdyZWxhdGlvbnNoaXBzJyksIGFycmF5KCdyZWxhdGlvbnNoaXBfdXVpZCc9PkNGMDFfREI6OnV1aWQoKSwncGF0aWVudF91dWlkJz0+JHBhdGllbnRbJ2NsaW5pY2FsX3V1aWQnXSwnZG9jdG9yX3VzZXJfaWQnPT4yLCdwdXJwb3NlJz0+J2NsaW5pY2FsX2NhcmUnLCdzY29wZV9qc29uJz0+J1tdJywnc3RhdHVzJz0+J3Byb3Bvc2VkJywncm93X3ZlcnNpb24nPT4xLCdjcmVhdGVkX2F0Jz0+Q0YwMV9EQjo6bm93KCksJ3VwZGF0ZWRfYXQnPT5DRjAxX0RCOjpub3coKSkpOwogICAgJHJvd3MgPSBhcnJheV92YWx1ZXMoJEdMT0JBTFNbJ3dwZGInXS0+dGFibGVzW0NGMDFfREI6OnRhYmxlKCdyZWxhdGlvbnNoaXBzJyldKTsKICAgICRsYXN0ID0gZW5kKCRyb3dzKTsKICAgICRwcmV2aW91c0NhcHMgPSAkR0xPQkFMU1snY2YwMV9jYXBzJ107CiAgICAkR0xPQkFMU1snY2YwMV9jYXBzJ10gPSBhcnJheSgnY2YwMV90cmVhdF9wYXRpZW50cycgPT4gdHJ1ZSk7CiAgICB0cnkgewogICAgICAgIGNmMDFfZXhwZWN0X2V4Y2VwdGlvbihmbigpID0+IENGMDFfUmVsYXRpb25zaGlwczo6YWN0aXZhdGUoMywgJGxhc3RbJ3JlbGF0aW9uc2hpcF91dWlkJ10sIDEpLCAnYXNzaWduZWQgdHJlYXRpbmcgZG9jdG9yJyk7CiAgICB9IGZpbmFsbHkgewogICAgICAgICRHTE9CQUxTWydjZjAxX2NhcHMnXSA9ICRwcmV2aW91c0NhcHM7CiAgICB9Cn0sICdyZWxhdGlvbnNoaXAgYWN0aXZhdGlvbiBhdXRob3JpemF0aW9uJyk7Cg=="
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          path = Path('tests/runtime-adversarial.php')
+          text = path.read_text()
+          old = base64.b64decode(os.environ['TEST_OLD']).decode()
+          new = base64.b64decode(os.environ['TEST_NEW']).decode()
+          if old not in text:
+              raise SystemExit('relationship authorization test marker missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          rm -f .github/workflows/cf01-relationship-auth-test-materialize.yml
+          php -l tests/runtime-adversarial.php >/dev/null
+          git diff --check
+      - name: Commit corrected regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'test: isolate relationship authorization capability'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
