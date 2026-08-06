@@ -160,7 +160,7 @@ ROUNDS = [
     Round(32, "Break-glass field ceiling", contains("breakglass", "$granted_fields", "array_intersect")),
     Round(33, "Break-glass race-safe expiry", contains("breakglass", "if (!$updated)", "BreakGlassExpired")),
     Round(34, "Rights request current eligibility", contains("rights", "actor($actor_id, 'request_clinical_right')")),
-    Round(35, "Representative identity binding", contains("rights", "guardian_or_representative($actor_id", "!$same_actor")),
+    Round(35, "Representative identity binding", contains("rights", "guardian_or_representative($actor_id", "CF01_Role_Context::resolve", "hash_equals")),
     Round(36, "Export provider-before-consumption", export_order),
     Round(37, "Correction patient match and atomicity", contains("rights", "Correction case and encounter patient do not match.", "CF01_DB::transaction(function () use ($actor_id, $case_uuid")),
     Round(38, "Bounded non-truncating exports", contains("rights", "bounded_rows", "approved paginated export job")),
