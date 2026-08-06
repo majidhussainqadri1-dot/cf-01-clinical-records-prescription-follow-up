@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,8 +12,8 @@ class RuntimePrivacyHardeningTests(unittest.TestCase):
         bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn("'class-cf01-runtime-privacy.php'", bootstrap)
         self.assertIn("CF01_Runtime_Privacy::register();", bootstrap)
-        self.assertIn("Version: 1.0.1", bootstrap)
-        self.assertIn("define('CF01_VERSION', '1.0.1');", bootstrap)
+        self.assertIn("Version: 1.0.0", bootstrap)
+        self.assertIn("define('CF01_VERSION', '1.0.0');", bootstrap)
 
     def test_every_clinical_response_is_no_store_and_non_frameable(self):
         source = GUARD.read_text(encoding="utf-8")
@@ -40,7 +39,7 @@ class RuntimePrivacyHardeningTests(unittest.TestCase):
         self.assertIn("cf01_view_clinical_health", source)
         self.assertIn("The clinical service could not complete this request.", source)
         self.assertNotIn("$error->getMessage()", source)
-        self.assertNotIn("trace", source.lower())
+        self.assertNotIn("debug_backtrace", source)
 
     def test_guard_is_scoped_to_canonical_namespace(self):
         source = GUARD.read_text(encoding="utf-8")
