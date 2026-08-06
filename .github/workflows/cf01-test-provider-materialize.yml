@@ -1,0 +1,53 @@
+name: CF-01 Materialize Test Providers
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-test-provider-materialize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Add deterministic native-owner test providers
+        shell: bash
+        env:
+          CF01_PROVIDER_BLOCK: "CmFkZF9maWx0ZXIoJ2NmMDFfc3ViamVjdF9pZGVudGl0eV9hc3NlcnRpb24nLCBmdW5jdGlvbiAoJHJlc3VsdCwgc3RyaW5nICRwbGF0Zm9ybV91dWlkLCBpbnQgJGFjdG9yX2lkLCBzdHJpbmcgJHB1cnBvc2UpOiBhcnJheSB7CiAgICByZXR1cm4gYXJyYXkoCiAgICAgICAgJ2NvbnRyYWN0X3ZlcnNpb24nID0+ICcxLjAuMCcsICdzdWJqZWN0X3BsYXRmb3JtX3V1aWQnID0+ICRwbGF0Zm9ybV91dWlkLAogICAgICAgICdhY3RpdmUnID0+IHRydWUsICdyZXZva2VkJyA9PiBmYWxzZSwgJ2V4cGlyZXNfYXQnID0+IGdtZGF0ZSgnWS1tLWQgSDppOnMnLCB0aW1lKCkgKyAzNjAwKSwKICAgICAgICAnZXZpZGVuY2VfcmVmZXJlbmNlJyA9PiAnaWRlbnRpdHktZXZpZGVuY2UtJyAuICRhY3Rvcl9pZCwKICAgICk7Cn0sIDEwLCA0KTsKYWRkX2ZpbHRlcignY2YwMV9yZWxhdGlvbnNoaXBfc291cmNlX2Fzc2VydGlvbicsIGZ1bmN0aW9uICgkcmVzdWx0LCBzdHJpbmcgJHJlZmVyZW5jZSwgaW50ICRhY3Rvcl9pZCwgc3RyaW5nICRwYXRpZW50X3V1aWQsIGludCAkZG9jdG9yX3VzZXJfaWQsIHN0cmluZyAkcHVycG9zZSwgYXJyYXkgJHNjb3BlKTogYXJyYXkgewogICAgcmV0dXJuIGFycmF5KAogICAgICAgICdjb250cmFjdF92ZXJzaW9uJyA9PiAnMS4wLjAnLCAnYWNjZXB0ZWQnID0+IHRydWUsICdyZXZva2VkJyA9PiBmYWxzZSwKICAgICAgICAnc291cmNlX3JlZmVyZW5jZScgPT4gJHJlZmVyZW5jZSwgJ3BhdGllbnRfdXVpZCcgPT4gJHBhdGllbnRfdXVpZCwKICAgICAgICAnZG9jdG9yX3VzZXJfaWQnID0+ICRkb2N0b3JfdXNlcl9pZCwgJ3B1cnBvc2UnID0+ICRwdXJwb3NlLCAnc2NvcGUnID0+ICRzY29wZSwKICAgICAgICAnZXhwaXJlc19hdCcgPT4gZ21kYXRlKCdZLW0tZCBIOmk6cycsIHRpbWUoKSArIDM2MDApLAogICAgKTsKfSwgMTAsIDcpOwphZGRfZmlsdGVyKCdjZjAxX2d1YXJkaWFuX2F1dGhvcml0eV9hc3NlcnRpb24nLCBmdW5jdGlvbiAoJHJlc3VsdCwgaW50ICRhY3Rvcl9pZCwgc3RyaW5nICRwYXRpZW50X3V1aWQsIHN0cmluZyAkcHVycG9zZSwgYXJyYXkgJGNvbnRleHQpOiBhcnJheSB7CiAgICAkcmVmZXJlbmNlID0gKHN0cmluZykgKCRjb250ZXh0WydyZWZlcmVuY2UnXSA/PyAkY29udGV4dFsnZ3VhcmRpYW5fcmVmZXJlbmNlJ10gPz8gJ2d1YXJkaWFuLWV2aWRlbmNlLScgLiAkYWN0b3JfaWQpOwogICAgcmV0dXJuIGFycmF5KAogICAgICAgICd2YWxpZCcgPT4gdHJ1ZSwgJ2NvbnRyYWN0X3ZlcnNpb24nID0+ICcxLjAuMCcsICdhY2NlcHRlZCcgPT4gdHJ1ZSwKICAgICAgICAncmV2b2tlZCcgPT4gZmFsc2UsICdzdXNwZW5kZWQnID0+IGZhbHNlLCAnYWN0b3JfdXNlcl9pZCcgPT4gJGFjdG9yX2lkLAogICAgICAgICdhY3Rvcl9wbGF0Zm9ybV91dWlkJyA9PiAncGxhdGZvcm0tdXNlci0nIC4gJGFjdG9yX2lkLCAncGF0aWVudF91dWlkJyA9PiAkcGF0aWVudF91dWlkLAogICAgICAgICdndWFyZGlhbl9yZWZlcmVuY2UnID0+ICRyZWZlcmVuY2UsICdzY29wZXMnID0+IGFycmF5KCdjbGluaWNhbF9jYXJlJywgJ2NsaW5pY2FsX3JpZ2h0cycsICdpbWFnZXMnLCAndGVsZWNvbnN1bHRhdGlvbicsICdyZWNvcmRpbmcnLCAndHJhbnNmZXInLCAncmVzZWFyY2gnLCAnZWR1Y2F0aW9uYWxfcmV1c2UnKSwKICAgICAgICAnYXV0aG9yaXR5X3ZlcnNpb24nID0+IDEsICdleHBpcmVzX2F0JyA9PiBnbWRhdGUoJ1ktbS1kIEg6aTpzJywgdGltZSgpICsgMzYwMCksCiAgICApOwp9LCAxMCwgNSk7CmFkZF9maWx0ZXIoJ2NmMDFfY2xpbmljYWxfdGVtcGxhdGVfYXNzZXJ0aW9uJywgZnVuY3Rpb24gKCRyZXN1bHQsIHN0cmluZyAka2V5LCBzdHJpbmcgJHZlcnNpb24sIHN0cmluZyAkY29udGV4dCk6IGFycmF5IHsKICAgIHJldHVybiBhcnJheSgKICAgICAgICAnY29udHJhY3RfdmVyc2lvbicgPT4gJzEuMC4wJywgJ2FjY2VwdGVkJyA9PiB0cnVlLCAncmV2b2tlZCcgPT4gZmFsc2UsCiAgICAgICAgJ3RlbXBsYXRlX2tleScgPT4gJGtleSwgJ3RlbXBsYXRlX3ZlcnNpb24nID0+ICR2ZXJzaW9uLCAnY29udGV4dCcgPT4gJGNvbnRleHQsCiAgICAgICAgJ2VmZmVjdGl2ZV9hdCcgPT4gJzIwMjYtMDgtMDEgMDA6MDA6MDAnLCAnaGlzdG9yaWNhbF9yZW5kZXJpbmdfc3VwcG9ydGVkJyA9PiB0cnVlLAogICAgKTsKfSwgMTAsIDQpOwphZGRfZmlsdGVyKCdjZjAxX3Rlcm1pbm9sb2d5X21hcHBpbmdfYXNzZXJ0aW9uJywgZnVuY3Rpb24gKCRyZXN1bHQsIGFycmF5ICRtYXBwaW5nKTogYXJyYXkgewogICAgcmV0dXJuIGFycmF5KAogICAgICAgICdjb250cmFjdF92ZXJzaW9uJyA9PiAnMS4wLjAnLCAnYWNjZXB0ZWQnID0+IHRydWUsICdwcm9maWxlX3ZlcnNpb24nID0+ICd0ZXN0LTEnLAogICAgICAgICd0ZXJtaW5vbG9neV92ZXJzaW9uJyA9PiAndGVzdC0xJywgJ21hcHBpbmdzJyA9PiAkbWFwcGluZywgJ3JvdW5kX3RyaXBfcHJlc2VydmVkJyA9PiB0cnVlLAogICAgKTsKfSwgMTAsIDIpOwphZGRfZmlsdGVyKCdjZjAxX2VtZXJnZW5jeV9wb2xpY3lfcmVxdWVzdCcsIGZ1bmN0aW9uICgkcmVzdWx0LCBhcnJheSAkcmVxdWVzdCk6IGFycmF5IHsKICAgIHJldHVybiBhcnJheSgKICAgICAgICAnY29udHJhY3RfdmVyc2lvbicgPT4gJzEuMC4wJywgJ2FjY2VwdGVkJyA9PiB0cnVlLAogICAgICAgICdndWlkYW5jZScgPT4gJ1VzZSB0aGUgYXBwcm92ZWQgbG9jYWwgZW1lcmdlbmN5IHBhdGh3YXkuJywgJ2FsZXJ0ZWQnID0+IHRydWUsCiAgICAgICAgJ2FsZXJ0X3JlZmVyZW5jZScgPT4gJ2VtZXJnZW5jeS1hbGVydC10ZXN0JywgJ2xvY2FsX2VtZXJnZW5jeV9kaXJlY3Rpb24nID0+IHRydWUsCiAgICApOwp9LCAxMCwgMik7CmFkZF9maWx0ZXIoJ2NmMDFfY2FyZV90ZWFtX2Fzc2VydGlvbicsIGZ1bmN0aW9uICgkcmVzdWx0LCBpbnQgJGFjdG9yX2lkLCBzdHJpbmcgJHBhdGllbnRfdXVpZCwgc3RyaW5nICRwdXJwb3NlLCBzdHJpbmcgJHJvbGUpOiBhcnJheSB7CiAgICByZXR1cm4gYXJyYXkoCiAgICAgICAgJ3ZhbGlkJyA9PiB0cnVlLCAnYWNjZXB0ZWQnID0+IHRydWUsICdyZXZva2VkJyA9PiBmYWxzZSwgJ3N1c3BlbmRlZCcgPT4gZmFsc2UsCiAgICAgICAgJ2NvbnRyYWN0X3ZlcnNpb24nID0+ICcxLjAuMCcsICdhc3NpZ25tZW50X3JlZmVyZW5jZScgPT4gJ2NhcmUtdGVhbS10ZXN0JywKICAgICAgICAnYXNzaWdubWVudF92ZXJzaW9uJyA9PiAxLCAnYWN0b3JfdXNlcl9pZCcgPT4gJGFjdG9yX2lkLCAncGF0aWVudF91dWlkJyA9PiAkcGF0aWVudF91dWlkLAogICAgICAgICdwdXJwb3NlJyA9PiAkcHVycG9zZSwgJ3JvbGUnID0+ICRyb2xlLCAnZXhwaXJlc19hdCcgPT4gZ21kYXRlKCdZLW0tZCBIOmk6cycsIHRpbWUoKSArIDM2MDApLAogICAgKTsKfSwgMTAsIDYpOwphZGRfZmlsdGVyKCdjZjAxX2NsaW5pY2FsX292ZXJzaWdodF9hc3NlcnRpb24nLCBmdW5jdGlvbiAoJHJlc3VsdCwgaW50ICRhY3Rvcl9pZCwgc3RyaW5nICRwYXRpZW50X3V1aWQsIHN0cmluZyAkcHVycG9zZSwgc3RyaW5nICRyb2xlKTogYXJyYXkgewogICAgcmV0dXJuIGFycmF5KAogICAgICAgICd2YWxpZCcgPT4gdHJ1ZSwgJ2FjY2VwdGVkJyA9PiB0cnVlLCAncmV2b2tlZCcgPT4gZmFsc2UsICdzdXNwZW5kZWQnID0+IGZhbHNlLAogICAgICAgICdjb250cmFjdF92ZXJzaW9uJyA9PiAnMS4wLjAnLCAnYXNzaWdubWVudF9yZWZlcmVuY2UnID0+ICdvdmVyc2lnaHQtdGVzdCcsCiAgICAgICAgJ2Fzc2lnbm1lbnRfdmVyc2lvbicgPT4gMSwgJ2FjdG9yX3VzZXJfaWQnID0+ICRhY3Rvcl9pZCwgJ3BhdGllbnRfdXVpZCcgPT4gJHBhdGllbnRfdXVpZCwKICAgICAgICAncHVycG9zZScgPT4gJHB1cnBvc2UsICdyb2xlJyA9PiAkcm9sZSwgJ2V4cGlyZXNfYXQnID0+IGdtZGF0ZSgnWS1tLWQgSDppOnMnLCB0aW1lKCkgKyAzNjAwKSwKICAgICk7Cn0sIDEwLCA2KTsK"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          path = Path('tests/bootstrap.php')
+          text = path.read_text()
+          marker = "$files = array("
+          if 'cf01_subject_identity_assertion' not in text:
+              block = base64.b64decode(__import__('os').environ['CF01_PROVIDER_BLOCK']).decode()
+              if marker not in text:
+                  raise SystemExit('bootstrap insertion marker missing')
+              text = text.replace(marker, block + '\n' + marker, 1)
+              path.write_text(text)
+          PY
+          rm -f .github/workflows/cf01-test-provider-materialize.yml
+          php -l tests/bootstrap.php >/dev/null
+          git diff --check
+      - name: Commit deterministic test providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'test: add CF-01 native-owner contract fixtures'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
