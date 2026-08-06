@@ -39,7 +39,7 @@ $assert(str_contains($consents, 'CF01_Role_Context::resolve($actor_id, $patient_
 $assert(str_contains($consents, 'CF01_Contracts::guardian_authority($actor_id, $patient_uuid, $purpose'), 'Guardian authorization must be revalidated against the native identity authority.');
 $assert(!str_contains($consents, '$guardian_actor || $guardian_reference'), 'A disclosed guardian reference must never authorize an unrelated actor.');
 $assert(str_contains($consents, 'apply_filters(\'cf01_legal_majority_age\''), 'Legal-majority age must be jurisdiction-policy configurable.');
-$assert(str_contains($consents, 'CF01_Authorization::actor($actor_id, \'record_own_consent\')'), 'Own or guardian consent action must recheck current actor eligibility.');
+$assert(str_contains($consents, 'CF01_Authorization::actor($actor_id, \'record_own_consent\', array('), 'Own or guardian consent action must recheck current actor eligibility.');
 $assert(str_contains($consents, 'Clinical age evidence is unavailable.'), 'Missing age evidence must fail closed for minor governance.');
 
 $assert(str_contains($relationships, 'authorize_relationship_actor($actor_id, $row'), 'Every relationship activation or transition must authorize the current actor.');
