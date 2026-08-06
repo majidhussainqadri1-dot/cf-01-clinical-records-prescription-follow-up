@@ -27,7 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/cf01-hardening/part-*.b64 | tr -d '\n\r' | base64 --decode | gzip --decompress > /tmp/cf01-hardening.patch
-          echo '0e82be875a14398a6c5f80694a43667b8104a56819d126cf4f35e1af83488f77  /tmp/cf01-hardening.patch' | sha256sum -c -
+          printf ' );\n' >> /tmp/cf01-hardening.patch
+          echo '0c2a7c5c6c7409fdbd50bf7afb6a0385c1cb88c8401ff202776d03662b7e28d4  /tmp/cf01-hardening.patch' | sha256sum -c -
           git apply --check /tmp/cf01-hardening.patch
       - name: Apply corrections and remove transient materializer
         shell: bash
