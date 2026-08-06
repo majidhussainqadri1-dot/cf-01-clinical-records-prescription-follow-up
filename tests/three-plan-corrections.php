@@ -30,6 +30,18 @@ $followups = $read('sabri-clinical-records/includes/class-cf01-followups.php');
 $rights = $read('sabri-clinical-records/includes/class-cf01-rights.php');
 $migrations = $read('sabri-clinical-records/includes/class-cf01-migrations.php');
 $breakGlass = $read('sabri-clinical-records/includes/class-cf01-break-glass.php');
+$plugin = $read('sabri-clinical-records/sabri-clinical-records.php');
+$pluginReadme = $read('sabri-clinical-records/readme.txt');
+$packageScript = $read('tools/package.sh');
+
+$check(str_contains($plugin, '* Version: 1.0.1'), 'WordPress plugin metadata does not identify runtime 1.0.1.');
+$check(str_contains($plugin, "define('CF01_VERSION', '1.0.1')"), 'CF01_VERSION is not 1.0.1.');
+$check(str_contains($plugin, "define('CF01_SCHEMA_VERSION', '1.0.0')"), 'Unchanged schema version is not explicitly preserved at 1.0.0.');
+$check(str_contains($plugin, "define('CF01_CONTRACT_VERSION', '1.0.0')"), 'Unchanged public contract version is not explicitly preserved at 1.0.0.');
+$check(str_contains($pluginReadme, 'Stable tag: 1.0.1'), 'WordPress stable tag is not 1.0.1.');
+$check(str_contains($pluginReadme, '= 1.0.1 ='), 'Runtime 1.0.1 changelog entry is missing.');
+$check(str_contains($packageScript, 'VERSION="1.0.1"'), 'Deterministic package identity is not 1.0.1.');
+$check(!str_contains($packageScript, 'VERSION="1.0.0"'), 'Superseded 1.0.0 package identity remains active.');
 
 $check(str_contains($css, '--cf01-primary:'), 'Green primary token is missing.');
 $check(str_contains($css, '#0b6b3a'), 'Approved green fallback is missing.');
