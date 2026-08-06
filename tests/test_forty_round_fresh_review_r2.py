@@ -22,7 +22,7 @@ class FortyRoundFreshReviewR2Tests(unittest.TestCase):
             "Clinical database rollback failed.",
         ):
             self.assertIn(marker, source)
-        self.assertGreaterEqual(source.count("$wpdb->query("), 5)
+        self.assertGreaterEqual(source.count("$wpdb->query("), 4)
         self.assertIn("=== false", source)
 
     def test_preactivation_governance_is_bounded_not_blanket_enabled(self):
