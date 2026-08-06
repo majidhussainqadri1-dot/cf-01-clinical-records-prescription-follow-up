@@ -84,8 +84,12 @@ $pass(function (): void {
 }, 'key rotation archive');
 
 $pass(function () use ($patient): void {
-    CF01_DB::insert('retention', array('policy_uuid'=>CF01_DB::uuid(),'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
-    cf01_assert(CF01_Retention::reconcile() === 0, 'Legal hold allowed purge eligibility.');
+    $policyUuid = CF01_DB::uuid();
+    CF01_DB::insert('retention', array('policy_uuid'=>$policyUuid,'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    CF01_Retention::reconcile();
+    $rows = array_values($GLOBALS['wpdb']->tables[CF01_DB::table('retention')] ?? array());
+    $held = array_values(array_filter($rows, static fn(array $row): bool => (string) ($row['policy_uuid'] ?? '') === $policyUuid));
+    cf01_assert(count($held) === 1 && (int) $held[0]['hold'] === 1 && (string) $held[0]['status'] === 'active', 'Legal hold allowed its policy row to become purge eligible.');
 }, 'legal hold purge denial');
 
 $pass(function () use ($patient): void {
