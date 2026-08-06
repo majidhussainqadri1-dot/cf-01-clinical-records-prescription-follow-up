@@ -1,0 +1,49 @@
+name: CF-01 Materialize Three-Plan Hardening
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-materialize-hardening.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.repository == 'majidhussainqadri1-dot/cf-01-clinical-records-prescription-follow-up'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Reconstruct and verify correction patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/cf01-hardening/part-*.b64 | tr -d '\n\r' | base64 --decode | gzip --decompress > /tmp/cf01-hardening.patch
+          echo '0e82be875a14398a6c5f80694a43667b8104a56819d126cf4f35e1af83488f77  /tmp/cf01-hardening.patch' | sha256sum -c -
+          git apply --check /tmp/cf01-hardening.patch
+      - name: Apply corrections and remove transient materializer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply /tmp/cf01-hardening.patch
+          rm -rf .github/cf01-hardening
+          rm -f .github/workflows/cf01-materialize-hardening.yml
+          find sabri-clinical-records tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+          git diff --check
+      - name: Commit corrected source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'fix: complete CF-01 three-plan clinical hardening'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
