@@ -49,9 +49,10 @@ The `sabri-clinical-records/` plugin source implements the approved source-level
 - field-level authorization, access ledger and patient rights;
 - break-glass, retention, audit/outbox, migration, rollback and continuity controls;
 - protected REST/UI surfaces, private headers and no-browser-storage rules;
-- native-owner contract validation and activation compensation.
+- native-owner contract validation and activation compensation;
+- R5 object-bound authorization, provider assertions, attachment hardening, emergency/reminder controls, signed-record restore verification and versioned encryption-key rotation.
 
-Runtime, schema and contract candidate versions are `1.0.0 / 1.0.0 / 1.0.0`. Activation remains disabled by default. Real patient data is prohibited.
+Runtime, schema and contract candidate versions are `1.0.1 / 1.0.0 / 1.0.0`. Activation remains disabled by default. Real patient data is prohibited.
 
 ## Development and review
 
