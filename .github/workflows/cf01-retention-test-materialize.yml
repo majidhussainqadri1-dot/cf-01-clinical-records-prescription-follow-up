@@ -1,0 +1,60 @@
+name: CF-01 Materialize Legal-Hold Regression Correction
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-retention-test-materialize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Correct legal-hold regression assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/runtime-adversarial.php')
+          text = path.read_text()
+          old = """$pass(function () use ($patient): void {
+    CF01_DB::insert('retention', array('policy_uuid'=>CF01_DB::uuid(),'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    cf01_assert(CF01_Retention::reconcile() === 0, 'Legal hold allowed purge eligibility.');
+}, 'legal hold purge denial');
+"""
+          new = """$pass(function () use ($patient): void {
+    $policyUuid = CF01_DB::uuid();
+    CF01_DB::insert('retention', array('policy_uuid'=>$policyUuid,'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    CF01_Retention::reconcile();
+    $rows = array_values($GLOBALS['wpdb']->tables[CF01_DB::table('retention')] ?? array());
+    $held = array_values(array_filter($rows, static fn(array $row): bool => (string) ($row['policy_uuid'] ?? '') === $policyUuid));
+    cf01_assert(count($held) === 1 && (int) $held[0]['hold'] === 1 && (string) $held[0]['status'] === 'active', 'Legal hold allowed its policy row to become purge eligible.');
+}, 'legal hold purge denial');
+"""
+          if old not in text:
+              raise SystemExit('legal-hold test marker missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          rm -f .github/workflows/cf01-retention-test-materialize.yml
+          php -l tests/runtime-adversarial.php >/dev/null
+          git diff --check
+      - name: Commit corrected regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'test: verify exact held retention policy state'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
