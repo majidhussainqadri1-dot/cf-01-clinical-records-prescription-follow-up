@@ -106,8 +106,18 @@ $pass(function () use ($patient): void {
 }, 'relationship activation authorization');
 
 $pass(function (): void {
-    $missing = CF01_Contracts::communication_context('missing-reference', 1);
-    cf01_assert(empty($missing['valid']), 'Missing communication provider must fail closed.');
+    add_filter(
+        'cf01_communication_context_assertion',
+        static fn($result, string $reference, int $actor_id) => $reference === 'missing-reference' ? null : $result,
+        99,
+        3
+    );
+    try {
+        $missing = CF01_Contracts::communication_context('missing-reference', 1);
+        cf01_assert(empty($missing['valid']), 'Missing communication provider must fail closed.');
+    } finally {
+        array_pop($GLOBALS['cf01_filters']['cf01_communication_context_assertion']);
+    }
 }, 'communication fail closed');
 
 fwrite(STDOUT, "CF-01 runtime adversarial review: {$count} PASS, 0 FAIL\n");
