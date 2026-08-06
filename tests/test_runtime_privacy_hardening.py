@@ -2,21 +2,22 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "sabri-clinical-records"
-BOOTSTRAP = PLUGIN / "sabri-clinical-records.php"
-GUARD = PLUGIN / "includes" / "class-cf01-runtime-privacy.php"
+BOOTSTRAP = ROOT / "sabri-clinical-records" / "sabri-clinical-records.php"
 
 
 class RuntimePrivacyHardeningTests(unittest.TestCase):
-    def test_guard_is_loaded_and_registered(self):
-        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("'class-cf01-runtime-privacy.php'", bootstrap)
-        self.assertIn("CF01_Runtime_Privacy::register();", bootstrap)
-        self.assertIn("Version: 1.0.0", bootstrap)
-        self.assertIn("define('CF01_VERSION', '1.0.0');", bootstrap)
+    def source(self):
+        return BOOTSTRAP.read_text(encoding="utf-8")
+
+    def test_guard_hooks_are_registered(self):
+        source = self.source()
+        self.assertIn("add_action('send_headers'", source)
+        self.assertIn("add_filter('rest_post_dispatch'", source)
+        self.assertIn("add_filter('rest_pre_serve_request'", source)
+        self.assertIn("private const REST_PREFIX = '/clinical/v1/';", source)
 
     def test_every_clinical_response_is_no_store_and_non_frameable(self):
-        source = GUARD.read_text(encoding="utf-8")
+        source = self.source()
         required = {
             "Cache-Control": "private, no-store, no-cache, must-revalidate, max-age=0",
             "Referrer-Policy": "no-referrer",
@@ -27,12 +28,9 @@ class RuntimePrivacyHardeningTests(unittest.TestCase):
         }
         for name, value in required.items():
             self.assertIn(f"'{name}' => '{value}'", source)
-        self.assertIn("rest_post_dispatch", source)
-        self.assertIn("rest_pre_serve_request", source)
-        self.assertIn("send_headers", source)
 
     def test_server_errors_are_redacted_by_default(self):
-        source = GUARD.read_text(encoding="utf-8")
+        source = self.source()
         self.assertRegex(source, r"\$status\s*>=\s*500")
         self.assertIn("!self::may_expose_diagnostics()", source)
         self.assertIn("cf01_allow_runtime_diagnostics", source)
@@ -42,8 +40,7 @@ class RuntimePrivacyHardeningTests(unittest.TestCase):
         self.assertNotIn("debug_backtrace", source)
 
     def test_guard_is_scoped_to_canonical_namespace(self):
-        source = GUARD.read_text(encoding="utf-8")
-        self.assertIn("private const REST_PREFIX = '/clinical/v1/';", source)
+        source = self.source()
         self.assertIn("str_starts_with($route, self::REST_PREFIX)", source)
         self.assertNotRegex(source, r"localStorage|sessionStorage|indexedDB")
 
