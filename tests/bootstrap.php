@@ -261,6 +261,69 @@ add_filter('cf01_visual_component_registration', fn($result, array $manifest): a
 add_filter('cf01_assurance_manifest_registration', fn($result, array $manifest): array => array('contract_version' => '1.0.0', 'registered' => true, 'native_enforcement_preserved' => true), 10, 2);
 add_filter('cf01_prescription_safety_review', fn($result, array $request, array $order): array => array('contract_version' => '1.0.0', 'passed' => true, 'blocking' => false, 'warnings' => array(), 'evidence_reference' => 'safety-evidence-opaque'), 10, 3);
 
+
+add_filter('cf01_subject_identity_assertion', function ($result, string $platform_uuid, int $actor_id, string $purpose): array {
+    return array(
+        'contract_version' => '1.0.0', 'subject_platform_uuid' => $platform_uuid,
+        'active' => true, 'revoked' => false, 'expires_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+        'evidence_reference' => 'identity-evidence-' . $actor_id,
+    );
+}, 10, 4);
+add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
+    return array(
+        'contract_version' => '1.0.0', 'accepted' => true, 'revoked' => false,
+        'source_reference' => $reference, 'patient_uuid' => $patient_uuid,
+        'doctor_user_id' => $doctor_user_id, 'purpose' => $purpose, 'scope' => $scope,
+        'expires_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+    );
+}, 10, 7);
+add_filter('cf01_guardian_authority_assertion', function ($result, int $actor_id, string $patient_uuid, string $purpose, array $context): array {
+    $reference = (string) ($context['reference'] ?? $context['guardian_reference'] ?? 'guardian-evidence-' . $actor_id);
+    return array(
+        'valid' => true, 'contract_version' => '1.0.0', 'accepted' => true,
+        'revoked' => false, 'suspended' => false, 'actor_user_id' => $actor_id,
+        'actor_platform_uuid' => 'platform-user-' . $actor_id, 'patient_uuid' => $patient_uuid,
+        'guardian_reference' => $reference, 'scopes' => array('clinical_care', 'clinical_rights', 'images', 'teleconsultation', 'recording', 'transfer', 'research', 'educational_reuse'),
+        'authority_version' => 1, 'expires_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+    );
+}, 10, 5);
+add_filter('cf01_clinical_template_assertion', function ($result, string $key, string $version, string $context): array {
+    return array(
+        'contract_version' => '1.0.0', 'accepted' => true, 'revoked' => false,
+        'template_key' => $key, 'template_version' => $version, 'context' => $context,
+        'effective_at' => '2026-08-01 00:00:00', 'historical_rendering_supported' => true,
+    );
+}, 10, 4);
+add_filter('cf01_terminology_mapping_assertion', function ($result, array $mapping): array {
+    return array(
+        'contract_version' => '1.0.0', 'accepted' => true, 'profile_version' => 'test-1',
+        'terminology_version' => 'test-1', 'mappings' => $mapping, 'round_trip_preserved' => true,
+    );
+}, 10, 2);
+add_filter('cf01_emergency_policy_request', function ($result, array $request): array {
+    return array(
+        'contract_version' => '1.0.0', 'accepted' => true,
+        'guidance' => 'Use the approved local emergency pathway.', 'alerted' => true,
+        'alert_reference' => 'emergency-alert-test', 'local_emergency_direction' => true,
+    );
+}, 10, 2);
+add_filter('cf01_care_team_assertion', function ($result, int $actor_id, string $patient_uuid, string $purpose, string $role): array {
+    return array(
+        'valid' => true, 'accepted' => true, 'revoked' => false, 'suspended' => false,
+        'contract_version' => '1.0.0', 'assignment_reference' => 'care-team-test',
+        'assignment_version' => 1, 'actor_user_id' => $actor_id, 'patient_uuid' => $patient_uuid,
+        'purpose' => $purpose, 'role' => $role, 'expires_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+    );
+}, 10, 6);
+add_filter('cf01_clinical_oversight_assertion', function ($result, int $actor_id, string $patient_uuid, string $purpose, string $role): array {
+    return array(
+        'valid' => true, 'accepted' => true, 'revoked' => false, 'suspended' => false,
+        'contract_version' => '1.0.0', 'assignment_reference' => 'oversight-test',
+        'assignment_version' => 1, 'actor_user_id' => $actor_id, 'patient_uuid' => $patient_uuid,
+        'purpose' => $purpose, 'role' => $role, 'expires_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+    );
+}, 10, 6);
+
 $files = array(
     'class-cf01-db.php','class-cf01-crypto.php','class-cf01-contracts.php','class-cf01-authorization.php',
     'class-cf01-patients.php','class-cf01-role-context.php','class-cf01-relationships.php','class-cf01-consents.php','class-cf01-encounters.php',
