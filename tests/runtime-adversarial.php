@@ -68,7 +68,9 @@ $pass(function () use ($right2): void { cf01_expect_exception(fn() => CF01_Right
 $pass(function () use ($patient, $enc, $order): void {
     $filters = $GLOBALS['cf01_filters']['cf01_prescription_safety_review'];
     $GLOBALS['cf01_filters']['cf01_prescription_safety_review'] = array(fn($result, array $request, array $value): array => array('contract_version'=>'1.0.0','passed'=>false,'blocking'=>true,'warnings'=>array('blocked'),'evidence_reference'=>'blocked'));
-    cf01_expect_exception(fn() => CF01_Prescriptions::create(2, $patient['clinical_uuid'], $enc['encounter_uuid'], $order), 'safety');
+    $blocked = CF01_Prescriptions::create(2, $patient['clinical_uuid'], $enc['encounter_uuid'], $order);
+    $blocked = CF01_Prescriptions::update(2, $blocked['prescription_uuid'], $order, 'ready_to_sign', 1);
+    cf01_expect_exception(fn() => CF01_Prescriptions::sign(2, $blocked['prescription_uuid'], 2), 'safety');
     $GLOBALS['cf01_filters']['cf01_prescription_safety_review'] = $filters;
 }, 'blocking safety review');
 
