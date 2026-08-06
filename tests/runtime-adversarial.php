@@ -96,7 +96,13 @@ $pass(function () use ($patient): void {
     $GLOBALS['wpdb']->insert(CF01_DB::table('relationships'), array('relationship_uuid'=>CF01_DB::uuid(),'patient_uuid'=>$patient['clinical_uuid'],'doctor_user_id'=>2,'purpose'=>'clinical_care','scope_json'=>'[]','status'=>'proposed','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
     $rows = array_values($GLOBALS['wpdb']->tables[CF01_DB::table('relationships')]);
     $last = end($rows);
-    cf01_expect_exception(fn() => CF01_Relationships::activate(3, $last['relationship_uuid'], 1), 'relationship');
+    $previousCaps = $GLOBALS['cf01_caps'];
+    $GLOBALS['cf01_caps'] = array('cf01_treat_patients' => true);
+    try {
+        cf01_expect_exception(fn() => CF01_Relationships::activate(3, $last['relationship_uuid'], 1), 'assigned treating doctor');
+    } finally {
+        $GLOBALS['cf01_caps'] = $previousCaps;
+    }
 }, 'relationship activation authorization');
 
 $pass(function (): void {
