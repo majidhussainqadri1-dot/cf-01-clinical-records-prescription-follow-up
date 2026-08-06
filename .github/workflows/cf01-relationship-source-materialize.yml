@@ -1,0 +1,99 @@
+name: CF-01 Materialize Relationship Source Discovery
+
+on:
+  push:
+    branches:
+      - codex/cf01-three-plan-complete-hardening-1.0.1
+    paths:
+      - .github/workflows/cf01-relationship-source-materialize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/cf01-three-plan-complete-hardening-1.0.1
+          persist-credentials: true
+      - name: Correct native-owner relationship source discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          contracts = Path('sabri-clinical-records/includes/class-cf01-contracts.php')
+          text = contracts.read_text()
+          old = """        $reference = sanitize_text_field($reference);
+        if ($reference === '') {
+            return array('valid' => false, 'code' => 'relationship_source_missing');
+        }
+        $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
+        if (!is_array($result)) {
+"""
+          new = """        $reference = sanitize_text_field($reference);
+        $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
+        if ($reference === '' && is_array($result)) {
+            $reference = sanitize_text_field((string) ($result['source_reference'] ?? ''));
+        }
+        if (!is_array($result) && $reference !== '') {
+"""
+          if old not in text:
+              raise SystemExit('relationship source block not found')
+          contracts.write_text(text.replace(old, new, 1))
+
+          relationships = Path('sabri-clinical-records/includes/class-cf01-relationships.php')
+          text = relationships.read_text()
+          old = """        if (empty($source['valid'])) {
+            throw new RuntimeException('A current native-owner relationship source assertion is required.');
+        }
+        $relationship_uuid = CF01_DB::uuid();
+"""
+          new = """        if (empty($source['valid'])) {
+            throw new RuntimeException('A current native-owner relationship source assertion is required.');
+        }
+        $source_reference = sanitize_text_field((string) $source['source_reference']);
+        $relationship_uuid = CF01_DB::uuid();
+"""
+          if old not in text:
+              raise SystemExit('relationship persistence block not found')
+          relationships.write_text(text.replace(old, new, 1))
+
+          bootstrap = Path('tests/bootstrap.php')
+          text = bootstrap.read_text()
+          old = """add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
+    return array(
+"""
+          new = """add_filter('cf01_relationship_source_assertion', function ($result, string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
+    $reference = $reference !== '' ? $reference : 'relationship-source-test-' . $patient_uuid;
+    return array(
+"""
+          if old not in text:
+              raise SystemExit('test relationship provider block not found')
+          bootstrap.write_text(text.replace(old, new, 1))
+          PY
+          rm -f .github/workflows/cf01-relationship-source-materialize.yml
+          find sabri-clinical-records tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+          git diff --check
+      - name: Commit corrected source and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'majidhussainqadri1-dot'
+          git config user.email 'majidhussainqadri1@gmail.com'
+          git add -A
+          git commit -m 'fix: accept canonical provider-discovered relationship source'
+          git push origin HEAD:codex/cf01-three-plan-complete-hardening-1.0.1
+      - name: Run focused clinical regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          php tests/security-corrections.php
+          php tests/three-plan-corrections.php
+          php tests/unit.php
+          php tests/runtime-adversarial.php
