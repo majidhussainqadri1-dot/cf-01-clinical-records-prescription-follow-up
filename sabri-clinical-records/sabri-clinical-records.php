@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Sabri Clinical Records
  * Description: Conditional, disabled-by-default clinical records, prescription and follow-up system of record for the Sabri Social Homeopathy Platform.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Requires at least: 6.0
  * Requires PHP: 8.1
  * Author: Dr. Allamah Majid Hussain Sabri Muhaddith Mursheed
@@ -11,7 +11,7 @@
 
 defined('ABSPATH') || exit;
 
-define('CF01_VERSION', '1.0.0');
+define('CF01_VERSION', '1.0.1');
 define('CF01_SCHEMA_VERSION', '1.0.0');
 define('CF01_CONTRACT_VERSION', '1.0.0');
 define('CF01_FILE', __FILE__);
@@ -40,6 +40,7 @@ $cf01_files = array(
     'class-cf01-rest.php',
     'class-cf01-lifecycle-rest.php',
     'class-cf01-ui-health.php',
+    'class-cf01-runtime-privacy.php',
     'class-cf01-migrations.php',
 );
 
@@ -52,6 +53,7 @@ final class CF01_Plugin {
     public static function boot(): void {
         CF01_Activation_Evidence::register();
         CF01_Release_Orchestrator::register();
+        CF01_Runtime_Privacy::register();
         add_action('plugins_loaded', array(__CLASS__, 'plugins_loaded'));
         add_action('init', array('CF01_UI', 'register'));
         add_action('rest_api_init', array('CF01_REST', 'register_routes'));
