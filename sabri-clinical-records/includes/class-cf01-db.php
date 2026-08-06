@@ -24,6 +24,7 @@ final class CF01_DB {
     );
 
     private static array $registered = array();
+    private static int $transaction_depth = 0;
 
     public static function register_tables(): void {
         foreach (self::TABLES as $key => $suffix) {
@@ -62,13 +63,37 @@ final class CF01_DB {
 
     public static function transaction(callable $callback) {
         global $wpdb;
-        $wpdb->query('START TRANSACTION');
+
+        $depth = self::$transaction_depth;
+        $savepoint = 'cf01_sp_' . $depth;
+        $begin_sql = $depth === 0 ? 'START TRANSACTION' : 'SAVEPOINT ' . $savepoint;
+        if ($wpdb->query($begin_sql) === false) {
+            throw new RuntimeException($depth === 0
+                ? 'Clinical database transaction could not be started.'
+                : 'Clinical database savepoint could not be created.');
+        }
+
+        self::$transaction_depth = $depth + 1;
         try {
             $result = $callback();
-            $wpdb->query('COMMIT');
+            self::$transaction_depth = $depth;
+
+            $finish_sql = $depth === 0 ? 'COMMIT' : 'RELEASE SAVEPOINT ' . $savepoint;
+            if ($wpdb->query($finish_sql) === false) {
+                throw new RuntimeException($depth === 0
+                    ? 'Clinical database transaction could not be committed.'
+                    : 'Clinical database savepoint could not be released.');
+            }
             return $result;
         } catch (Throwable $error) {
-            $wpdb->query('ROLLBACK');
+            self::$transaction_depth = $depth;
+            $rollback_ok = $wpdb->query($depth === 0 ? 'ROLLBACK' : 'ROLLBACK TO SAVEPOINT ' . $savepoint) !== false;
+            if ($depth > 0 && $rollback_ok) {
+                $rollback_ok = $wpdb->query('RELEASE SAVEPOINT ' . $savepoint) !== false;
+            }
+            if (!$rollback_ok) {
+                throw new RuntimeException('Clinical database rollback failed.', 0, $error);
+            }
             throw $error;
         }
     }
@@ -107,8 +132,6 @@ final class CF01_DB {
         }
         return $updated === 1;
     }
-
-
 
     public static function idempotent(int $actor_id, string $command, string $key, array $request, callable $operation): array {
         if (!preg_match('/^[A-Za-z0-9._:-]{8,128}$/', $key)) {
