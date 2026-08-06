@@ -22,6 +22,7 @@ SOURCES = {
     "validator": read("tools/validate_runtime.py"),
     "workflow": read(".github/workflows/governance.yml"),
     "plugin": read("sabri-clinical-records/sabri-clinical-records.php"),
+    "db": read("sabri-clinical-records/includes/class-cf01-db.php"),
     "auth": read("sabri-clinical-records/includes/class-cf01-authorization.php"),
     "patients": read("sabri-clinical-records/includes/class-cf01-patients.php"),
     "relationships": read("sabri-clinical-records/includes/class-cf01-relationships.php"),
@@ -35,6 +36,7 @@ SOURCES = {
     "audit": read("sabri-clinical-records/includes/class-cf01-audit-outbox.php"),
     "retention": read("sabri-clinical-records/includes/class-cf01-retention.php"),
     "rest": read("sabri-clinical-records/includes/class-cf01-rest.php"),
+    "ui": read("sabri-clinical-records/includes/class-cf01-ui-health.php"),
     "migrations": read("sabri-clinical-records/includes/class-cf01-migrations.php"),
     "package": read("tools/package.sh"),
     "sbom": read("tools/generate_sbom.py"),
@@ -64,6 +66,14 @@ def cross_contains(*requirements: tuple[str, str]) -> Callable[[], None]:
         for source, needle in requirements:
             if needle not in SOURCES[source]:
                 raise AssertionError(f"{source} is missing cross-file invariant: {needle}")
+
+    return check
+
+
+def all_checks(*checks: Callable[[], None]) -> Callable[[], None]:
+    def check() -> None:
+        for item in checks:
+            item()
 
     return check
 
@@ -125,9 +135,15 @@ class Round:
     review: Callable[[], None]
 
 
+FRESH_DEFECT_ROUNDS = {2, 18, 20, 39, 40}
+
+
 ROUNDS = [
     Round(1, "Plan-to-runtime traceability", count_requirements),
-    Round(2, "Conditional activation fail-closed", contains("plugin", "update_option('cf01_activation_state', 'disabled'", "disabled-by-default clinical records")),
+    Round(2, "Conditional activation and bounded pre-activation governance", all_checks(
+        contains("plugin", "update_option('cf01_activation_state', 'disabled'", "disabled-by-default clinical records"),
+        contains("auth", "private const PRE_ACTIVATION_ACTIONS", "run_clinical_migration", "run_clinical_rollback", "rotate_clinical_key", "view_clinical_health", "if (!in_array($action, self::PRE_ACTIVATION_ACTIONS, true))")
+    )),
     Round(3, "Canonical clinical identity separation", contains("patients", "platform_subject_hash", "platform_subject_cipher", "clinical_uuid")),
     Round(4, "Explicit actor identity", contains("auth", "Clinical actor identity mismatch.", "cf01_allow_service_actor")),
     Round(5, "Membership eligibility", contains("auth", "membership($user_id)", "!empty($membership['suspended'])")),
@@ -143,9 +159,15 @@ ROUNDS = [
     Round(15, "Minor and guardian governance", contains("consents", "cf01_legal_majority_age", "minor_assent")),
     Round(16, "Field-level allowlist", contains("auth", "cf01_field_policy", "array_intersect($requested, $allowed)")),
     Round(17, "Patient ownership boundary", contains("auth", "platform_subject_hash", "patient_owner")),
-    Round(18, "Encounter context validation", contains("encounters", "validate_context", "Invalid encounter mode.")),
+    Round(18, "Encounter context plus shortcode/private-route classification", all_checks(
+        contains("encounters", "validate_context", "Invalid encounter mode."),
+        contains("ui", "has_shortcode((string) $post->post_content, 'sabri_clinical_records')", "function_exists('is_singular')", "if (str_contains($pattern, '('))")
+    )),
     Round(19, "Teleconsultation consent", contains("encounters", "consent($patient_uuid, 'teleconsultation')")),
-    Round(20, "Draft optimistic concurrency", cross_contains(("encounters", "update_versioned('encounters'"), ("auth", "Stale clinical record version."))),
+    Round(20, "Draft concurrency plus fail-closed nested transaction integrity", all_checks(
+        cross_contains(("encounters", "update_versioned('encounters'"), ("auth", "Stale clinical record version.")),
+        contains("db", "private static int $transaction_depth = 0;", "SAVEPOINT ' . $savepoint", "ROLLBACK TO SAVEPOINT ' . $savepoint", "Clinical database transaction could not be committed.", "Clinical database rollback failed.")
+    )),
     Round(21, "Signed encounter immutability", contains("encounters", "Signed or tombstoned encounter content is immutable.")),
     Round(22, "Addendum parent versioning", contains("encounters", "array('status' => 'addended')", "parent_row_version")),
     Round(23, "Entered-in-error relationship scope", contains("encounters", "mark_entered_in_error", "relationship_for_record")),
@@ -164,8 +186,15 @@ ROUNDS = [
     Round(36, "Export provider-before-consumption", export_order),
     Round(37, "Correction patient match and atomicity", contains("rights", "Correction case and encounter patient do not match.", "CF01_DB::transaction(function () use ($actor_id, $case_uuid")),
     Round(38, "Bounded non-truncating exports", contains("rights", "bounded_rows", "approved paginated export job")),
-    Round(39, "Dual-PHP and deterministic retained release bundle", workflow_matrix),
-    Round(40, "Integrated independent final review", contains("validator", "CF01-FR-032", "CF-01 runtime policy validation PASS")),
+    Round(39, "Dual-PHP package reproducibility and single authoritative header owner", all_checks(
+        workflow_matrix,
+        excludes("ui", "add_action('send_headers', array(__CLASS__, 'headers'))", "public static function headers(): void", "Permissions-Policy:", "Cache-Control:")
+    )),
+    Round(40, "Integrated independent final review and complete 5xx redaction", all_checks(
+        contains("validator", "CF01-FR-032", "CF-01 runtime policy validation PASS"),
+        contains("plugin", "'code' => 'cf01_internal_error'", "'X-Robots-Tag' => 'noindex, nofollow, noarchive, nosnippet, noimageindex'"),
+        excludes("plugin", "isset($data['code'])", "sanitize_key((string) $data['code'])")
+    )),
 ]
 
 
@@ -191,12 +220,21 @@ def correction_gate(round_number: int) -> None:
 def main() -> int:
     if len(ROUNDS) != 40 or [item.number for item in ROUNDS] != list(range(1, 41)):
         raise RuntimeError("Review register must contain exactly forty sequential rounds.")
+    if not FRESH_DEFECT_ROUNDS.issubset(set(range(1, 41))):
+        raise RuntimeError("Fresh defect-round register contains an invalid round number.")
     for item in ROUNDS:
         item.review()
-        print(f"ROUND {item.number:02d} REVIEW PASS — {item.title}")
+        finding = "DEFECT CORRECTED" if item.number in FRESH_DEFECT_ROUNDS else "NO NEW DEFECT"
+        print(f"ROUND {item.number:02d} REVIEW PASS — {item.title} — {finding}")
         correction_gate(item.number)
         print(f"ROUND {item.number:02d} CORRECTION GATE PASS — fresh regression evidence reconfirmed")
-    print("CF-01 FORTY-ROUND REVIEW: 40/40 REVIEW PASS; 40/40 CORRECTION GATE PASS")
+    defect_count = len(FRESH_DEFECT_ROUNDS)
+    clean_count = len(ROUNDS) - defect_count
+    print(
+        "CF-01 FORTY-ROUND FRESH REVIEW: "
+        f"40/40 REVIEW PASS; 40/40 CORRECTION GATE PASS; "
+        f"{defect_count} ROUNDS WITH DEFECTS CORRECTED; {clean_count} ROUNDS WITH NO NEW DEFECT"
+    )
     return 0
 
 

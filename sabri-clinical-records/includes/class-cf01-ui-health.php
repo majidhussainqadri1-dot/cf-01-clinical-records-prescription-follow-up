@@ -14,18 +14,33 @@ final class CF01_UI {
 
     public static function register(): void {
         foreach (self::ROUTES as $pattern => $view) {
-            add_rewrite_rule($pattern, 'index.php?cf01_view=' . $view . '&cf01_object=$matches[1]', 'top');
+            $target = 'index.php?cf01_view=' . $view;
+            if (str_contains($pattern, '(')) {
+                $target .= '&cf01_object=$matches[1]';
+            }
+            add_rewrite_rule($pattern, $target, 'top');
         }
         add_rewrite_tag('%cf01_view%', '([^&]+)');
         add_rewrite_tag('%cf01_object%', '([a-f0-9-]{36})');
         add_filter('template_include', array(__CLASS__, 'template'));
-        add_action('send_headers', array(__CLASS__, 'headers'));
         add_shortcode('sabri_clinical_records', array(__CLASS__, 'shortcode'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'assets'));
     }
 
     public static function is_clinical_request(): bool {
-        return get_query_var('cf01_view') !== '' || is_admin() && isset($_GET['page']) && str_starts_with(sanitize_key((string) $_GET['page']), 'cf01');
+        if (get_query_var('cf01_view') !== '') {
+            return true;
+        }
+        if (is_admin() && isset($_GET['page']) && str_starts_with(sanitize_key((string) $_GET['page']), 'cf01')) {
+            return true;
+        }
+        if (!function_exists('is_singular') || !function_exists('has_shortcode') || !is_singular()) {
+            return false;
+        }
+        global $post;
+        return is_object($post)
+            && isset($post->post_content)
+            && has_shortcode((string) $post->post_content, 'sabri_clinical_records');
     }
 
     public static function template(string $template): string {
@@ -37,20 +52,6 @@ final class CF01_UI {
             exit;
         }
         return CF01_DIR . 'templates/clinical-shell.php';
-    }
-
-    public static function headers(): void {
-        if (!self::is_clinical_request()) {
-            return;
-        }
-        nocache_headers();
-        header('Cache-Control: no-store, private, max-age=0, must-revalidate', true);
-        header('Pragma: no-cache', true);
-        header('X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex', true);
-        header("Referrer-Policy: no-referrer", true);
-        header("X-Frame-Options: DENY", true);
-        header("X-Content-Type-Options: nosniff", true);
-        header("Permissions-Policy: camera=(), microphone=(), geolocation=()", true);
     }
 
     public static function assets(): void {

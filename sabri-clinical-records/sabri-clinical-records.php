@@ -126,10 +126,8 @@ final class CF01_Plugin {
         }
         $status = (int) $response->get_status();
         if ($status >= 500 && !self::may_expose_diagnostics()) {
-            $data = $response->get_data();
-            $code = is_array($data) && isset($data['code']) ? sanitize_key((string) $data['code']) : 'cf01_internal_error';
             $response->set_data(array(
-                'code' => $code ?: 'cf01_internal_error',
+                'code' => 'cf01_internal_error',
                 'message' => __('The clinical service could not complete this request.', 'sabri-clinical-records'),
                 'data' => array('status' => $status),
             ));
@@ -165,6 +163,7 @@ final class CF01_Plugin {
             'Referrer-Policy' => 'no-referrer',
             'X-Content-Type-Options' => 'nosniff',
             'X-Frame-Options' => 'DENY',
+            'X-Robots-Tag' => 'noindex, nofollow, noarchive, nosnippet, noimageindex',
             'Cross-Origin-Resource-Policy' => 'same-origin',
             'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
         );

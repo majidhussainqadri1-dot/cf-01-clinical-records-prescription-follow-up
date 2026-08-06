@@ -11,6 +11,13 @@ final class CF01_Authorization {
         'run_clinical_migration', 'run_clinical_rollback', 'rotate_clinical_key', 'disable_module'
     );
 
+    private const PRE_ACTIVATION_ACTIONS = array(
+        'view_clinical_health',
+        'run_clinical_migration',
+        'run_clinical_rollback',
+        'rotate_clinical_key',
+    );
+
     public static function require_enabled(): void {
         if (!CF01_DB::is_enabled()) {
             throw new RuntimeException('CF-01 is disabled pending activation acceptance.');
@@ -25,7 +32,9 @@ final class CF01_Authorization {
         if ($current_user_id > 0 && $current_user_id !== $user_id && !apply_filters('cf01_allow_service_actor', false, $current_user_id, $user_id, $action)) {
             throw new RuntimeException('Clinical actor identity mismatch.');
         }
-        self::require_enabled();
+        if (!in_array($action, self::PRE_ACTIVATION_ACTIONS, true)) {
+            self::require_enabled();
+        }
         $membership = CF01_Contracts::membership($user_id);
         if (empty($membership['valid']) || empty($membership['approved']) || !empty($membership['suspended'])) {
             throw new RuntimeException('Current membership is not eligible for clinical access.');
