@@ -13,11 +13,6 @@ final class CF01_Crypto {
             && function_exists('openssl_decrypt');
     }
 
-    /**
-     * Stable root key used for blind indexes and signatures.
-     * Encryption subkeys are versioned separately so envelope-key rotation does
-     * not invalidate identity indexes or signed clinical provenance.
-     */
     public static function key(): ?string {
         $material = null;
         if (defined('CF01_MASTER_KEY') && is_string(CF01_MASTER_KEY) && CF01_MASTER_KEY !== '') {
@@ -84,6 +79,7 @@ final class CF01_Crypto {
             throw new RuntimeException('Unsupported clinical encryption algorithm.');
         }
 
+        $legacy_has_no_key_version = !array_key_exists('kv', $payload);
         $key_version = max(1, (int) ($payload['kv'] ?? 1));
         $key = self::encryption_key($key_version);
         if ($key === null) {
@@ -111,17 +107,16 @@ final class CF01_Crypto {
             $aad = self::aad($purpose, $key_version, $context_version);
         } else {
             // Version-1 envelopes were created by release 1.0.0 and bound AAD
-            // to that runtime value. Keep this explicit compatibility path so a
-            // future plugin version cannot make existing clinical data unreadable.
-            $aad = array_key_exists('kv', $payload)
-                ? 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose . '|key:' . $key_version
-                : 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose;
+            // to that runtime value. This explicit compatibility path prevents
+            // later plugin version promotion from making those records unreadable.
+            $aad = $legacy_has_no_key_version
+                ? 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose
+                : 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose . '|key:' . $key_version;
         }
 
         if (!hash_equals(hash('sha256', $aad), $expected_aad)) {
             throw new RuntimeException('Clinical encryption purpose mismatch.');
         }
-
         $plaintext = openssl_decrypt($ciphertext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag, $aad);
         if (!is_string($plaintext)) {
             throw new RuntimeException('Clinical decryption failed.');
@@ -139,36 +134,25 @@ final class CF01_Crypto {
         if (strlen($reason) < 8) {
             throw new InvalidArgumentException('A substantive clinical key-rotation reason is required.');
         }
-
         $current = self::current_key_version();
         $next = $current + 1;
         if (self::encryption_key($next) === null) {
             throw new RuntimeException('The next clinical encryption key version is unavailable.');
         }
-
         $previous = get_option('cf01_crypto_key_version', 1);
         if (!update_option('cf01_crypto_key_version', $next, false)) {
             throw new RuntimeException('Clinical encryption key version could not be advanced.');
         }
-
         try {
-            CF01_Audit::record(
-                $actor_id,
-                'ClinicalEncryptionKeyRotated',
-                'clinical_key',
-                (string) $next,
-                'security_operations',
-                array(
-                    'previous_version' => $current,
-                    'new_version' => $next,
-                    'reason_hash' => hash('sha256', $reason),
-                )
-            );
+            CF01_Audit::record($actor_id, 'ClinicalEncryptionKeyRotated', 'clinical_key', (string) $next, 'security_operations', array(
+                'previous_version' => $current,
+                'new_version' => $next,
+                'reason_hash' => hash('sha256', $reason),
+            ));
         } catch (Throwable $error) {
             update_option('cf01_crypto_key_version', $previous, false);
             throw $error;
         }
-
         return $next;
     }
 
@@ -222,12 +206,9 @@ final class CF01_Crypto {
         if ($root === null) {
             return null;
         }
-
-        // Version 1 preserves compatibility with every pre-rotation envelope.
         $derived = $version === 1
             ? $root
             : hash_hmac('sha256', 'cf01-encryption-key-version|' . $version, $root, true);
-
         $material = apply_filters('cf01_encryption_key_material', $derived, $version);
         if (!is_string($material) || strlen($material) < 32) {
             return null;
