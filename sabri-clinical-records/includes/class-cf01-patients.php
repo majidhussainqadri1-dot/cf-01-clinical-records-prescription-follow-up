@@ -3,8 +3,9 @@ defined('ABSPATH') || exit;
 
 final class CF01_Patients {
     public static function create(int $actor_id, string $platform_uuid, array $minimum_demographics, string $jurisdiction): array {
-        CF01_Authorization::actor($actor_id, 'create_clinical_patient');
+        $actor = CF01_Authorization::actor($actor_id, 'create_clinical_patient');
         self::validate_demographics($minimum_demographics);
+        self::validate_subject_link($actor_id, $platform_uuid, $actor, 'create_clinical_patient');
         $subject_hash = CF01_Crypto::blind_index($platform_uuid, 'platform-subject');
         $existing = CF01_DB::row(
             'SELECT * FROM ' . CF01_DB::table('patients') . ' WHERE platform_subject_hash = %s ORDER BY id DESC LIMIT 1',
@@ -38,7 +39,8 @@ final class CF01_Patients {
     }
 
     public static function link_platform_identity(int $actor_id, string $clinical_uuid, string $platform_uuid, int $expected_version): array {
-        CF01_Authorization::actor($actor_id, 'link_platform_identity');
+        $actor = CF01_Authorization::actor($actor_id, 'link_platform_identity');
+        self::validate_subject_link($actor_id, $platform_uuid, $actor, 'link_platform_identity');
         $patient = self::get($clinical_uuid);
         CF01_Authorization::expected_version($patient, $expected_version);
         $hash = CF01_Crypto::blind_index($platform_uuid, 'platform-subject');
@@ -70,9 +72,7 @@ final class CF01_Patients {
         if (!isset($guardian['status']) || !in_array($guardian['status'], $allowed_status, true)) {
             throw new InvalidArgumentException('Invalid guardian status.');
         }
-        if (($guardian['status'] ?? '') === 'verified' && empty($guardian['scope'])) {
-            throw new InvalidArgumentException('Guardian scope is required.');
-        }
+        $guardian = self::normalize_guardian_context($actor_id, $clinical_uuid, $guardian);
         $ok = CF01_DB::update_versioned('patients', array(
             'guardian_context_cipher' => CF01_Crypto::encrypt($guardian, 'guardian-context'),
         ), array('clinical_uuid' => $clinical_uuid), $expected_version);
@@ -129,6 +129,53 @@ final class CF01_Patients {
     public static function guardian_context(array $row): array {
         $value = CF01_Crypto::decrypt((string) $row['guardian_context_cipher'], 'guardian-context');
         return is_array($value) ? $value : array();
+    }
+
+
+
+    private static function validate_subject_link(int $actor_id, string $platform_uuid, array $actor, string $purpose): void {
+        $platform_uuid = trim($platform_uuid);
+        if ($platform_uuid === '') {
+            throw new InvalidArgumentException('A platform subject UUID is required.');
+        }
+        $actor_subject = (string) ($actor['membership']['platform_uuid'] ?? '');
+        if ($actor_subject !== '' && hash_equals($actor_subject, $platform_uuid)) {
+            return;
+        }
+        $assertion = CF01_Contracts::subject_identity($platform_uuid, $actor_id, $purpose);
+        if (empty($assertion['valid'])) {
+            throw new RuntimeException('A current native-owner subject identity assertion is required.');
+        }
+    }
+
+    private static function normalize_guardian_context(int $actor_id, string $clinical_uuid, array $guardian): array {
+        $status = sanitize_key((string) ($guardian['status'] ?? ''));
+        if ($status !== 'verified') {
+            return array(
+                'status' => $status,
+                'reference' => sanitize_text_field((string) ($guardian['reference'] ?? '')),
+                'updated_at' => CF01_DB::now(),
+            );
+        }
+        $reference = sanitize_text_field((string) ($guardian['reference'] ?? ''));
+        if ($reference === '') {
+            throw new InvalidArgumentException('Guardian authority reference is required.');
+        }
+        $purpose = sanitize_key((string) ($guardian['purpose'] ?? 'clinical_care'));
+        $assertion = CF01_Contracts::guardian_authority($actor_id, $clinical_uuid, $purpose, $reference);
+        if (empty($assertion['valid'])) {
+            throw new RuntimeException('Verified guardian status requires a current File 00 authority assertion.');
+        }
+        return array(
+            'status' => 'verified',
+            'platform_uuid' => sanitize_text_field((string) $assertion['actor_platform_uuid']),
+            'reference' => sanitize_text_field((string) $assertion['guardian_reference']),
+            'scope' => array_values(array_unique(array_map('sanitize_key', (array) $assertion['scopes']))),
+            'expires_at' => sanitize_text_field((string) $assertion['expires_at']),
+            'authority_version' => (int) $assertion['authority_version'],
+            'contract_version' => sanitize_text_field((string) $assertion['contract_version']),
+            'updated_at' => CF01_DB::now(),
+        );
     }
 
     private static function validate_demographics(array $data): void {

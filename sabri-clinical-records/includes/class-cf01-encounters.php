@@ -23,9 +23,16 @@ final class CF01_Encounters {
             throw new RuntimeException('Encounter relationship reference does not match current treating authority.');
         }
         $data['relationship_uuid'] = (string) $relationship['relationship_uuid'];
+        $template_key = sanitize_key((string) ($data['template_key'] ?? 'general'));
+        $template_version = sanitize_text_field((string) ($data['template_version'] ?? '1.0.0'));
+        $template = CF01_Contracts::clinical_template($template_key, $template_version, sanitize_key((string) ($data['encounter_type'] ?? 'consultation')));
+        if (empty($template['valid'])) {
+            throw new RuntimeException('An accepted versioned clinical template is required.');
+        }
         $uuid = CF01_DB::uuid();
         $content = self::normalize_content($data['content'] ?? array());
-        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $data, $content, $uuid): void {
+        self::validate_content_contracts($actor_id, $patient_uuid, $content, 'encounter_create');
+        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $data, $content, $uuid, $template_key, $template_version): void {
             CF01_DB::insert('encounters', array(
                 'encounter_uuid' => $uuid,
                 'patient_uuid' => $patient_uuid,
@@ -39,8 +46,8 @@ final class CF01_Encounters {
                 'status' => 'draft',
                 'content_cipher' => CF01_Crypto::encrypt($content, 'encounter-content'),
                 'content_hash' => hash('sha256', CF01_Crypto::canonical_json($content)),
-                'template_key' => sanitize_key((string) ($data['template_key'] ?? 'general')),
-                'template_version' => sanitize_text_field((string) ($data['template_version'] ?? '1.0.0')),
+                'template_key' => $template_key,
+                'template_version' => $template_version,
                 'author_user_id' => $actor_id,
                 'signed_by_user_id' => null,
                 'signed_at' => null,
@@ -57,7 +64,7 @@ final class CF01_Encounters {
     public static function update_draft(int $actor_id, string $uuid, array $content, string $next_status, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'update_encounter');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $row['relationship_uuid'], 'update_encounter');
         CF01_Authorization::expected_version($row, $expected_version);
         if (in_array((string) $row['status'], array('signed', 'addended', 'entered_in_error'), true)) {
             throw new RuntimeException('Signed or tombstoned encounter content is immutable.');
@@ -65,6 +72,7 @@ final class CF01_Encounters {
         $next_status = sanitize_key($next_status);
         self::transition_allowed((string) $row['status'], $next_status);
         $normalized = self::normalize_content($content);
+        self::validate_content_contracts($actor_id, (string) $row['patient_uuid'], $normalized, 'encounter_update');
         $ok = CF01_DB::update_versioned('encounters', array(
             'status' => $next_status,
             'content_cipher' => CF01_Crypto::encrypt($normalized, 'encounter-content'),
@@ -80,12 +88,15 @@ final class CF01_Encounters {
     public static function sign(int $actor_id, string $uuid, int $expected_version): array {
         $row = self::get($uuid);
         $context = CF01_Authorization::clinician($actor_id, 'sign_encounter');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $row['relationship_uuid'], 'sign_encounter');
         CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
         CF01_Authorization::expected_version($row, $expected_version);
         self::transition_allowed((string) $row['status'], 'signed');
         $content = self::content($row);
         self::validate_signable($content);
+        $signed_at = CF01_DB::now();
+        $demographics = CF01_Patients::demographics(CF01_Patients::get((string) $row['patient_uuid']));
+        $signed_time = CF01_Contracts::local_timestamp($signed_at, (string) ($demographics['time_zone'] ?? 'UTC'));
         $snapshot = array(
             'encounter_uuid' => $uuid,
             'patient_uuid' => (string) $row['patient_uuid'],
@@ -94,7 +105,9 @@ final class CF01_Encounters {
             'professional_uuid' => (string) $context['professional']['professional_uuid'],
             'content_hash' => (string) $row['content_hash'],
             'row_version' => $expected_version,
-            'signed_at' => CF01_DB::now(),
+            'signed_at' => $signed_time['utc'],
+            'signed_local_at' => $signed_time['local'],
+            'time_zone' => $signed_time['time_zone'],
             'contract_version' => CF01_CONTRACT_VERSION,
         );
         $signature = CF01_Crypto::sign($snapshot, 'encounter-signature');
@@ -117,16 +130,19 @@ final class CF01_Encounters {
     public static function addendum(int $actor_id, string $parent_uuid, array $content): array {
         $parent = self::get($parent_uuid);
         $context = CF01_Authorization::clinician($actor_id, 'add_encounter_addendum');
-        CF01_Authorization::relationship((string) $parent['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $parent['patient_uuid'], $actor_id, 'clinical_care', (string) $parent['relationship_uuid'], 'add_encounter_addendum');
         if (!in_array((string) $parent['status'], array('signed', 'addended'), true)) {
             throw new RuntimeException('Addenda require a signed parent encounter.');
         }
         $normalized = self::normalize_content($content);
+        self::validate_content_contracts($actor_id, (string) $parent['patient_uuid'], $normalized, 'encounter_addendum');
         if (empty($normalized['narrative'])) {
             throw new InvalidArgumentException('Addendum narrative is required.');
         }
         $uuid = CF01_DB::uuid();
         $signed_at = CF01_DB::now();
+        $demographics = CF01_Patients::demographics(CF01_Patients::get((string) $parent['patient_uuid']));
+        $signed_time = CF01_Contracts::local_timestamp($signed_at, (string) ($demographics['time_zone'] ?? 'UTC'));
         $snapshot = array(
             'encounter_uuid' => $uuid,
             'parent_encounter_uuid' => $parent_uuid,
@@ -135,7 +151,9 @@ final class CF01_Encounters {
             'signer_user_id' => $actor_id,
             'professional_uuid' => (string) $context['professional']['professional_uuid'],
             'content_hash' => hash('sha256', CF01_Crypto::canonical_json($normalized)),
-            'signed_at' => $signed_at,
+            'signed_at' => $signed_time['utc'],
+            'signed_local_at' => $signed_time['local'],
+            'time_zone' => $signed_time['time_zone'],
         );
         CF01_DB::transaction(function () use ($actor_id, $parent, $parent_uuid, $normalized, $uuid, $snapshot, $signed_at): void {
             $parent_updated = CF01_DB::update_versioned(
@@ -179,7 +197,7 @@ final class CF01_Encounters {
     public static function mark_entered_in_error(int $actor_id, string $uuid, string $reason, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'mark_encounter_error');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $row['relationship_uuid'], 'mark_encounter_entered_in_error');
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') === 'entered_in_error') {
             return $row;
@@ -204,7 +222,8 @@ final class CF01_Encounters {
     public static function add_observation(int $actor_id, string $encounter_uuid, string $type, $value, array $provenance): array {
         $encounter = self::get($encounter_uuid);
         CF01_Authorization::clinician($actor_id, 'add_observation');
-        CF01_Authorization::relationship((string) $encounter['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $encounter['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'add_observation');
+        CF01_Authorization::consent((string) $encounter['patient_uuid'], 'clinical_care');
         if (in_array((string) $encounter['status'], array('signed', 'addended', 'entered_in_error'), true)) {
             throw new RuntimeException('New observations require an open encounter or a separate addendum.');
         }
@@ -235,7 +254,7 @@ final class CF01_Encounters {
     public static function correct_observation(int $actor_id, string $observation_uuid, $value, string $reason, int $expected_version): array {
         $old = self::observation($observation_uuid);
         CF01_Authorization::clinician($actor_id, 'correct_observation');
-        CF01_Authorization::relationship((string) $old['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $old['patient_uuid'], $actor_id, 'clinical_care', (string) self::get((string) $old['encounter_uuid'])['relationship_uuid'], 'correct_observation');
         CF01_Authorization::expected_version($old, $expected_version);
         $reason = trim($reason);
         if (($old['status'] ?? '') !== 'active' || $reason === '') {
@@ -266,7 +285,8 @@ final class CF01_Encounters {
     public static function create_assessment(int $actor_id, string $encounter_uuid, array $assessment): array {
         $encounter = self::get($encounter_uuid);
         CF01_Authorization::clinician($actor_id, 'create_assessment');
-        CF01_Authorization::relationship((string) $encounter['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $encounter['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'create_assessment');
+        CF01_Authorization::consent((string) $encounter['patient_uuid'], 'clinical_care');
         if (in_array((string) $encounter['status'], array('signed', 'addended', 'entered_in_error'), true)) {
             throw new RuntimeException('A new assessment requires an open encounter.');
         }
@@ -303,7 +323,7 @@ final class CF01_Encounters {
         $row = self::assessment($assessment_uuid);
         $encounter = self::get((string) $row['encounter_uuid']);
         $context = CF01_Authorization::clinician($actor_id, 'sign_encounter');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'sign_assessment');
         CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') !== 'draft') {
@@ -312,6 +332,9 @@ final class CF01_Encounters {
         if (in_array((string) $encounter['status'], array('signed', 'addended', 'entered_in_error'), true)) {
             throw new RuntimeException('Assessment must be signed while its encounter remains open.');
         }
+        $signed_at = CF01_DB::now();
+        $demographics = CF01_Patients::demographics(CF01_Patients::get((string) $row['patient_uuid']));
+        $signed_time = CF01_Contracts::local_timestamp($signed_at, (string) ($demographics['time_zone'] ?? 'UTC'));
         $snapshot = array(
             'assessment_uuid' => $assessment_uuid,
             'patient_uuid' => $row['patient_uuid'],
@@ -320,7 +343,9 @@ final class CF01_Encounters {
             'signer_user_id' => $actor_id,
             'professional_uuid' => $context['professional']['professional_uuid'],
             'row_version' => $expected_version,
-            'signed_at' => CF01_DB::now(),
+            'signed_at' => $signed_time['utc'],
+            'signed_local_at' => $signed_time['local'],
+            'time_zone' => $signed_time['time_zone'],
         );
         $ok = CF01_DB::update_versioned('assessments', array(
             'status' => 'signed',
@@ -371,6 +396,56 @@ final class CF01_Encounters {
 
     public static function state_map(): array {
         return self::STATES;
+    }
+
+
+    public static function verify_integrity(array $row): bool {
+        if (empty($row['signature']) || empty($row['snapshot_cipher'])) {
+            return false;
+        }
+        $snapshot = CF01_Crypto::decrypt((string) $row['snapshot_cipher'], 'encounter-snapshot');
+        return is_array($snapshot)
+            && hash_equals((string) ($snapshot['encounter_uuid'] ?? ''), (string) ($row['encounter_uuid'] ?? ''))
+            && hash_equals((string) ($snapshot['content_hash'] ?? ''), (string) ($row['content_hash'] ?? ''))
+            && CF01_Crypto::verify($snapshot, 'encounter-signature', (string) $row['signature']);
+    }
+
+    public static function verify_assessment_integrity(array $row): bool {
+        if (empty($row['signature']) || ($row['status'] ?? '') !== 'signed') {
+            return false;
+        }
+        $snapshot = array(
+            'assessment_uuid' => (string) $row['assessment_uuid'],
+            'patient_uuid' => (string) $row['patient_uuid'],
+            'encounter_uuid' => (string) $row['encounter_uuid'],
+            'assessment_hash' => (string) $row['assessment_hash'],
+            'signer_user_id' => (int) $row['author_user_id'],
+            'professional_uuid' => '',
+            'row_version' => max(1, (int) $row['row_version'] - 1),
+            'signed_at' => (string) $row['signed_at'],
+        );
+        $external = apply_filters('cf01_assessment_signature_snapshot', null, $row, $snapshot);
+        return is_array($external) && CF01_Crypto::verify($external, 'assessment-signature', (string) $row['signature']);
+    }
+
+    private static function validate_content_contracts(int $actor_id, string $patient_uuid, array $content, string $source): void {
+        $mapping = (array) ($content['interoperability_mapping'] ?? array());
+        $mapping_result = CF01_Contracts::terminology_mapping($mapping);
+        if (empty($mapping_result['valid'])) {
+            throw new RuntimeException('Clinical terminology mapping is unaccepted or cannot preserve narrative meaning.');
+        }
+        $red_flags = array_values(array_unique(array_map('sanitize_key', (array) ($content['red_flags'] ?? array()))));
+        $emergency = CF01_Contracts::emergency_policy($patient_uuid, $actor_id, $red_flags, $source);
+        if (empty($emergency['valid'])) {
+            throw new RuntimeException('Approved emergency guidance and clinician alert are required for red-flag content.');
+        }
+        if ($red_flags) {
+            CF01_Audit::record($actor_id, 'ClinicalRedFlagEscalated', 'clinical_patient', $patient_uuid, 'emergency_boundary', array(
+                'source' => sanitize_key($source),
+                'alert_reference_hash' => hash('sha256', (string) $emergency['alert_reference']),
+                'autonomous_diagnosis' => false,
+            ));
+        }
     }
 
     private static function normalize_content(array $content): array {

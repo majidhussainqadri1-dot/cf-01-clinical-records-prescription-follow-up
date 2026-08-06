@@ -17,12 +17,13 @@ final class CF01_Followups {
 
     public static function plan(int $actor_id, string $patient_uuid, string $prescription_uuid, array $plan): array {
         CF01_Authorization::clinician($actor_id, 'plan_followup');
-        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
         CF01_Authorization::consent($patient_uuid, 'clinical_care');
         $prescription = CF01_Prescriptions::get($prescription_uuid);
         if ((string) $prescription['patient_uuid'] !== $patient_uuid || (string) $prescription['status'] !== 'signed') {
             throw new RuntimeException('Follow-up requires the patient’s active signed prescription.');
         }
+        $encounter = CF01_Encounters::get((string) $prescription['encounter_uuid']);
+        CF01_Authorization::relationship_for_record($patient_uuid, $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'plan_followup');
         $due_at = self::future_utc($plan['due_at'] ?? null);
         $overdue_at = self::future_utc($plan['overdue_at'] ?? gmdate('Y-m-d H:i:s', strtotime($due_at . ' UTC') + DAY_IN_SECONDS));
         if (strtotime($overdue_at . ' UTC') <= strtotime($due_at . ' UTC')) {
@@ -37,7 +38,7 @@ final class CF01_Followups {
             'status' => 'planned',
             'due_at' => $due_at,
             'overdue_at' => $overdue_at,
-            'reminder_policy_json' => wp_json_encode(self::normalize_reminders((array) ($plan['reminders'] ?? array()))),
+            'reminder_policy_json' => wp_json_encode(self::normalize_reminders((array) ($plan['reminders'] ?? array()), $patient_uuid)),
             'questionnaire_cipher' => CF01_Crypto::encrypt($questionnaire, 'followup-questionnaire'),
             'plan_cipher' => CF01_Crypto::encrypt(array(
                 'objectives' => self::sanitize($plan['objectives'] ?? array()),
@@ -68,6 +69,11 @@ final class CF01_Followups {
             throw new RuntimeException('This follow-up is not accepting a response.');
         }
         $normalized = self::normalize_response($response);
+        $red_flags = array_values(array_unique(array_map('sanitize_key', (array) ($normalized['red_flags'] ?? array()))));
+        $emergency = CF01_Contracts::emergency_policy((string) $followup['patient_uuid'], $actor_id, $red_flags, 'patient_outcome');
+        if (empty($emergency['valid'])) {
+            throw new RuntimeException('Approved emergency guidance and clinician alert are required for red-flag outcomes.');
+        }
         $outcome_uuid = CF01_DB::uuid();
         CF01_DB::transaction(function () use ($actor_id, $followup, $followup_uuid, $normalized, $outcome_uuid, $expected_version): void {
             CF01_DB::insert('outcomes', array(
@@ -99,7 +105,9 @@ final class CF01_Followups {
         $outcome = self::outcome($outcome_uuid);
         $followup = self::get((string) $outcome['followup_uuid']);
         CF01_Authorization::clinician($actor_id, 'review_followup');
-        CF01_Authorization::relationship((string) $outcome['patient_uuid'], $actor_id, 'clinical_care');
+        $prescription = CF01_Prescriptions::get((string) $followup['prescription_uuid']);
+        $encounter = CF01_Encounters::get((string) $prescription['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $outcome['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'review_followup');
         CF01_Authorization::expected_version($outcome, $expected_outcome_version);
         if (($outcome['review_status'] ?? '') !== 'pending') {
             throw new RuntimeException('Outcome was already reviewed.');
@@ -143,7 +151,7 @@ final class CF01_Followups {
     public static function reschedule(int $actor_id, string $uuid, string $due_at, string $reason, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'reschedule_followup');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        self::authorize_followup_clinician($actor_id, $row, 'reschedule_followup');
         CF01_Authorization::expected_version($row, $expected_version);
         if (in_array((string) $row['status'], array('closed', 'cancelled'), true)) {
             throw new RuntimeException('Closed or cancelled follow-up cannot be rescheduled.');
@@ -167,7 +175,7 @@ final class CF01_Followups {
     public static function close(int $actor_id, string $uuid, string $reason, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'close_followup');
-        CF01_Authorization::relationship((string) $row['patient_uuid'], $actor_id, 'clinical_care');
+        self::authorize_followup_clinician($actor_id, $row, 'close_followup');
         CF01_Authorization::expected_version($row, $expected_version);
         if (!in_array((string) $row['status'], array('reviewed', 'needs_contact'), true)) {
             throw new RuntimeException('Follow-up requires clinical review before closure.');
@@ -206,7 +214,12 @@ final class CF01_Followups {
         $ok = CF01_DB::update_versioned('followups', array('status' => $next), array('followup_uuid' => $row['followup_uuid']), (int) $row['row_version']);
         if ($ok) {
             CF01_Audit::system('FollowUpStatusReconciled', 'follow_up_plan', (string) $row['followup_uuid'], 'clinical_care', array('status' => $next));
-            CF01_Outbox::enqueue('FollowUpStatusChanged', array('followup_uuid' => $row['followup_uuid'], 'patient_uuid' => $row['patient_uuid'], 'status' => $next), (string) $row['followup_uuid']);
+            $current = self::get((string) $row['followup_uuid']);
+            if (self::reminder_delivery_allowed($current)) {
+                CF01_Outbox::enqueue('FollowUpStatusChanged', array('followup_uuid' => $row['followup_uuid'], 'patient_uuid' => $row['patient_uuid'], 'status' => $next), (string) $row['followup_uuid']);
+            } else {
+                CF01_Audit::system('FollowUpReminderSuppressed', 'follow_up_plan', (string) $row['followup_uuid'], 'notification_preference', array('status' => $next));
+            }
         }
     }
 
@@ -265,15 +278,61 @@ final class CF01_Followups {
         return $normalized;
     }
 
-    private static function normalize_reminders(array $items): array {
-        $result = array();
-        foreach ($items as $item) {
+    private static function normalize_reminders(array $policy, string $patient_uuid): array {
+        $demographics = CF01_Patients::demographics(CF01_Patients::get($patient_uuid));
+        $time_zone = sanitize_text_field((string) ($policy['time_zone'] ?? $demographics['time_zone'] ?? 'UTC'));
+        try {
+            new DateTimeZone($time_zone);
+        } catch (Throwable $error) {
+            throw new InvalidArgumentException('A valid reminder time zone is required.');
+        }
+        $offsets = array();
+        $raw_offsets = array_key_exists('offset_hours', $policy) ? (array) $policy['offset_hours'] : array_filter($policy, 'is_int');
+        foreach ($raw_offsets as $item) {
             $hours = (int) $item;
             if ($hours >= 1 && $hours <= 720) {
-                $result[] = $hours;
+                $offsets[] = $hours;
             }
         }
-        return array_values(array_unique($result));
+        $quiet_start = sanitize_text_field((string) ($policy['quiet_start'] ?? '22:00'));
+        $quiet_end = sanitize_text_field((string) ($policy['quiet_end'] ?? '07:00'));
+        foreach (array($quiet_start, $quiet_end) as $clock) {
+            if (!preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $clock)) {
+                throw new InvalidArgumentException('Quiet-hours values must use HH:MM.');
+            }
+        }
+        return array(
+            'opt_in' => !empty($policy['opt_in']),
+            'offset_hours' => array_values(array_unique($offsets)),
+            'quiet_start' => $quiet_start,
+            'quiet_end' => $quiet_end,
+            'time_zone' => $time_zone,
+            'no_shame_or_streaks' => true,
+        );
+    }
+
+    private static function reminder_delivery_allowed(array $followup): bool {
+        $policy = json_decode((string) ($followup['reminder_policy_json'] ?? ''), true);
+        if (!is_array($policy) || empty($policy['opt_in'])) {
+            return false;
+        }
+        try {
+            $zone = new DateTimeZone((string) ($policy['time_zone'] ?? 'UTC'));
+            $now = new DateTimeImmutable('now', $zone);
+        } catch (Throwable $error) {
+            return false;
+        }
+        $clock = $now->format('H:i');
+        $start = (string) ($policy['quiet_start'] ?? '22:00');
+        $end = (string) ($policy['quiet_end'] ?? '07:00');
+        $quiet = $start <= $end ? ($clock >= $start && $clock < $end) : ($clock >= $start || $clock < $end);
+        return !$quiet;
+    }
+
+    private static function authorize_followup_clinician(int $actor_id, array $followup, string $action): void {
+        $prescription = CF01_Prescriptions::get((string) $followup['prescription_uuid']);
+        $encounter = CF01_Encounters::get((string) $prescription['encounter_uuid']);
+        CF01_Authorization::relationship_for_record((string) $followup['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], $action);
     }
 
     private static function future_utc($value): string {

@@ -86,17 +86,17 @@ final class CF01_Role_Context {
     }
 
     private static function staff(int $actor_id, string $patient_uuid, string $purpose, string $requested_role): ?array {
-        if (self::can($actor_id, 'cf01_audit_clinical') && ($requested_role === '' || $requested_role === 'auditor')) {
+        if ($requested_role === 'auditor' && self::can($actor_id, 'cf01_audit_clinical')) {
             CF01_Authorization::actor($actor_id, 'view_clinical_audit', array('purpose' => $purpose, 'patient_uuid' => $patient_uuid));
             return self::oversight_context($actor_id, $patient_uuid, $purpose, 'auditor');
         }
-        if ((self::can($actor_id, 'cf01_manage_clinical_rights') || self::can($actor_id, 'cf01_manage_retention')) && ($requested_role === '' || $requested_role === 'records')) {
+        if ($requested_role === 'records' && (self::can($actor_id, 'cf01_manage_clinical_rights') || self::can($actor_id, 'cf01_manage_retention'))) {
             CF01_Authorization::actor($actor_id, 'view_access_history', array('purpose' => $purpose, 'patient_uuid' => $patient_uuid));
             return self::oversight_context($actor_id, $patient_uuid, $purpose, 'records');
         }
 
         foreach (self::CARE_TEAM_ROLES as $role) {
-            if ($requested_role !== '' && $requested_role !== $role) {
+            if ($requested_role === '' || $requested_role !== $role) {
                 continue;
             }
             $capability = $role === 'assistant' ? 'cf01_assist_clinical' : 'cf01_supervise_clinical';

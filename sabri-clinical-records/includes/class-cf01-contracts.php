@@ -150,12 +150,193 @@ final class CF01_Contracts {
         return CF01_Crypto::canonical_json($minimal);
     }
 
+
+
+    public static function relationship_source(string $reference, int $actor_id, string $patient_uuid, int $doctor_user_id, string $purpose, array $scope): array {
+        $reference = sanitize_text_field($reference);
+        $result = apply_filters('cf01_relationship_source_assertion', null, $reference, $actor_id, $patient_uuid, $doctor_user_id, sanitize_key($purpose), $scope);
+        if ($reference === '' && is_array($result)) {
+            $reference = sanitize_text_field((string) ($result['source_reference'] ?? ''));
+        }
+        if (!is_array($result) && $reference !== '') {
+            $care = self::care_context($reference, $actor_id);
+            $patient = CF01_Patients::get($patient_uuid);
+            $patient_platform_uuid = CF01_Crypto::decrypt((string) ($patient['platform_subject_cipher'] ?? ''), 'patient-platform-link');
+            $doctor_membership = self::membership($doctor_user_id);
+            if (!empty($care['valid'])
+                && is_string($patient_platform_uuid)
+                && hash_equals($patient_platform_uuid, (string) ($care['patient_platform_uuid'] ?? ''))
+                && hash_equals((string) ($doctor_membership['platform_uuid'] ?? ''), (string) ($care['practitioner_platform_uuid'] ?? ''))
+            ) {
+                $result = array(
+                    'contract_version' => '1.0.0', 'accepted' => true, 'revoked' => false,
+                    'source_reference' => $reference, 'patient_uuid' => $patient_uuid,
+                    'doctor_user_id' => $doctor_user_id, 'purpose' => sanitize_key($purpose),
+                    'scope' => $scope, 'expires_at' => gmdate('Y-m-d H:i:s', time() + HOUR_IN_SECONDS),
+                );
+            }
+        }
+        $validated = self::validate($result, '1.0.0', array(
+            'accepted', 'revoked', 'source_reference', 'patient_uuid', 'doctor_user_id', 'purpose', 'scope', 'expires_at'
+        ));
+        $asserted_scope = array_values(array_unique(array_map('sanitize_key', (array) ($validated['scope'] ?? array()))));
+        $requested_scope = array_values(array_unique(array_map('sanitize_key', $scope)));
+        if (empty($validated['valid'])
+            || empty($validated['accepted'])
+            || !empty($validated['revoked'])
+            || !hash_equals($reference, (string) ($validated['source_reference'] ?? ''))
+            || !hash_equals($patient_uuid, (string) ($validated['patient_uuid'] ?? ''))
+            || (int) ($validated['doctor_user_id'] ?? 0) !== $doctor_user_id
+            || !hash_equals(sanitize_key($purpose), sanitize_key((string) ($validated['purpose'] ?? '')))
+            || !$requested_scope
+            || array_diff($requested_scope, $asserted_scope)
+            || empty($validated['expires_at'])
+            || !CF01_Authorization::not_expired((string) $validated['expires_at'])
+        ) {
+            return array('valid' => false, 'code' => 'relationship_source_unaccepted');
+        }
+        return $validated;
+    }
+
+    public static function subject_identity(string $platform_uuid, int $actor_id, string $purpose): array {
+        $platform_uuid = trim($platform_uuid);
+        if ($platform_uuid === '') {
+            return array('valid' => false, 'code' => 'subject_identity_missing');
+        }
+        $result = apply_filters('cf01_subject_identity_assertion', null, $platform_uuid, $actor_id, sanitize_key($purpose));
+        $validated = self::validate($result, '1.0.0', array(
+            'subject_platform_uuid', 'active', 'revoked', 'expires_at', 'evidence_reference'
+        ));
+        if (empty($validated['valid'])
+            || empty($validated['active'])
+            || !empty($validated['revoked'])
+            || empty($validated['expires_at'])
+            || !CF01_Authorization::not_expired((string) $validated['expires_at'])
+            || !hash_equals($platform_uuid, (string) ($validated['subject_platform_uuid'] ?? ''))
+        ) {
+            return array('valid' => false, 'code' => 'subject_identity_inactive');
+        }
+        return $validated;
+    }
+
+    public static function guardian_authority(int $actor_id, string $patient_uuid, string $purpose, string $reference = ''): array {
+        $membership = self::membership($actor_id);
+        if (empty($membership['valid']) || empty($membership['approved']) || !empty($membership['suspended'])) {
+            return array('valid' => false, 'code' => 'guardian_actor_ineligible');
+        }
+        $result = apply_filters('cf01_guardian_authority_assertion', null, $actor_id, $patient_uuid, sanitize_key($purpose), array('reference' => $reference));
+        $validated = self::validate($result, '1.0.0', array(
+            'accepted', 'revoked', 'suspended', 'actor_user_id', 'actor_platform_uuid',
+            'patient_uuid', 'guardian_reference', 'scopes', 'authority_version', 'expires_at'
+        ));
+        $scopes = array_values(array_unique(array_map('sanitize_key', (array) ($validated['scopes'] ?? array()))));
+        if (empty($validated['valid'])
+            || empty($validated['accepted'])
+            || !empty($validated['revoked'])
+            || !empty($validated['suspended'])
+            || (int) ($validated['actor_user_id'] ?? 0) !== $actor_id
+            || !hash_equals((string) ($membership['platform_uuid'] ?? ''), (string) ($validated['actor_platform_uuid'] ?? ''))
+            || !hash_equals($patient_uuid, (string) ($validated['patient_uuid'] ?? ''))
+            || ($reference !== '' && !hash_equals($reference, (string) ($validated['guardian_reference'] ?? '')))
+            || !$scopes
+            || !in_array(sanitize_key($purpose), $scopes, true)
+            || (int) ($validated['authority_version'] ?? 0) < 1
+            || empty($validated['expires_at'])
+            || !CF01_Authorization::not_expired((string) $validated['expires_at'])
+        ) {
+            return array('valid' => false, 'code' => 'guardian_authority_inactive');
+        }
+        return $validated;
+    }
+
+    public static function clinical_template(string $key, string $version, string $context): array {
+        $key = sanitize_key($key);
+        $version = sanitize_text_field($version);
+        $result = apply_filters('cf01_clinical_template_assertion', null, $key, $version, sanitize_key($context));
+        if (!is_array($result) && in_array($key, array('general', 'addendum'), true) && $version === '1.0.0') {
+            $result = array(
+                'contract_version' => '1.0.0', 'accepted' => true, 'revoked' => false,
+                'template_key' => $key, 'template_version' => $version,
+                'context' => sanitize_key($context), 'effective_at' => '2026-08-01 00:00:00',
+                'historical_rendering_supported' => true,
+            );
+        }
+        $validated = self::validate($result, '1.0.0', array(
+            'accepted', 'revoked', 'template_key', 'template_version', 'context', 'effective_at', 'historical_rendering_supported'
+        ));
+        if (empty($validated['valid'])
+            || empty($validated['accepted'])
+            || !empty($validated['revoked'])
+            || !hash_equals($key, sanitize_key((string) ($validated['template_key'] ?? '')))
+            || !hash_equals($version, (string) ($validated['template_version'] ?? ''))
+            || !hash_equals(sanitize_key($context), sanitize_key((string) ($validated['context'] ?? '')))
+            || empty($validated['historical_rendering_supported'])
+        ) {
+            return array('valid' => false, 'code' => 'clinical_template_unaccepted');
+        }
+        return $validated;
+    }
+
+    public static function terminology_mapping(array $mapping): array {
+        if (!$mapping) {
+            return array('valid' => true, 'accepted' => true, 'mappings' => array());
+        }
+        $result = apply_filters('cf01_terminology_mapping_assertion', null, $mapping);
+        $validated = self::validate($result, '1.0.0', array(
+            'accepted', 'profile_version', 'terminology_version', 'mappings', 'round_trip_preserved'
+        ));
+        if (empty($validated['valid']) || empty($validated['accepted']) || empty($validated['round_trip_preserved'])) {
+            return array('valid' => false, 'code' => 'terminology_mapping_unaccepted');
+        }
+        foreach ((array) $validated['mappings'] as $item) {
+            if (!is_array($item) || empty($item['local_id']) || empty($item['label']) || empty($item['code'])) {
+                return array('valid' => false, 'code' => 'terminology_mapping_incomplete');
+            }
+        }
+        return $validated;
+    }
+
+    public static function emergency_policy(string $patient_uuid, int $actor_id, array $red_flags, string $source): array {
+        if (!$red_flags) {
+            return array('valid' => true, 'accepted' => true, 'guidance' => '', 'alert_reference' => '');
+        }
+        $request = array(
+            'contract_version' => '1.0.0',
+            'patient_uuid' => $patient_uuid,
+            'actor_user_id' => $actor_id,
+            'source' => sanitize_key($source),
+            'red_flag_codes' => array_values(array_unique(array_map('sanitize_key', $red_flags))),
+            'autonomous_diagnosis' => false,
+        );
+        $result = apply_filters('cf01_emergency_policy_request', null, $request);
+        $validated = self::validate($result, '1.0.0', array('accepted', 'guidance', 'alerted', 'alert_reference', 'local_emergency_direction'));
+        if (empty($validated['valid']) || empty($validated['accepted']) || empty($validated['guidance']) || empty($validated['alerted']) || empty($validated['local_emergency_direction'])) {
+            return array('valid' => false, 'code' => 'emergency_policy_unavailable');
+        }
+        return $validated;
+    }
+
+    public static function local_timestamp(string $utc, string $time_zone): array {
+        try {
+            $zone = new DateTimeZone($time_zone !== '' ? $time_zone : 'UTC');
+            $value = new DateTimeImmutable($utc, new DateTimeZone('UTC'));
+        } catch (Throwable $error) {
+            throw new InvalidArgumentException('A valid clinical time zone is required.');
+        }
+        return array(
+            'utc' => $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
+            'local' => $value->setTimezone($zone)->format(DateTimeInterface::ATOM),
+            'time_zone' => $zone->getName(),
+        );
+    }
+
     public static function dependency_report(): array {
         return array(
             'membership' => function_exists('smc_membership_assertions'),
             'recent_auth' => function_exists('sauth_cf01_recent_authentication_assertion'),
             'practitioner' => function_exists('sgd_cf01_professional_eligibility_assertion'),
             'care_context' => function_exists('swc_cf01_care_context_assertion'),
+            'relationship_source' => has_filter('cf01_relationship_source_assertion'),
             'communication_context' => function_exists('sn_cf01_communication_context_assertion'),
             'notifications' => function_exists('sun_cf01_request_notification'),
             'shell' => has_filter('cf01_shell_route_registration'),
@@ -163,6 +344,11 @@ final class CF01_Contracts {
             'assurance' => has_filter('cf01_assurance_manifest_registration'),
             'secure_media' => has_filter('cf01_secure_media_operation'),
             'prescription_safety' => has_filter('cf01_prescription_safety_review'),
+            'subject_identity' => has_filter('cf01_subject_identity_assertion'),
+            'guardian_authority' => has_filter('cf01_guardian_authority_assertion'),
+            'clinical_template' => has_filter('cf01_clinical_template_assertion'),
+            'terminology_mapping' => has_filter('cf01_terminology_mapping_assertion'),
+            'emergency_policy' => has_filter('cf01_emergency_policy_request'),
         );
     }
 
@@ -175,7 +361,9 @@ final class CF01_Contracts {
             'activation_state' => CF01_DB::activation_state(),
             'controls' => array(
                 'field_authorization', 'encrypted_clinical_fields', 'immutable_signed_records',
-                'purpose_consent', 'break_glass_ttl', 'durable_audit', 'outbox', 'retention_holds'
+                'purpose_consent', 'current_guardian_authority', 'object_scoped_relationships',
+                'break_glass_ttl', 'durable_audit', 'outbox', 'retention_holds', 'emergency_escalation',
+                'template_and_terminology_provenance'
             ),
         );
     }

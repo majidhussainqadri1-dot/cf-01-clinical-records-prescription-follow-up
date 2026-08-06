@@ -6,12 +6,13 @@ final class CF01_Attachments {
 
     public static function attach(int $actor_id, string $patient_uuid, string $encounter_uuid, array $asset): array {
         CF01_Authorization::clinician($actor_id, 'attach_clinical_asset');
-        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care');
+        CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care', 'attach_clinical_asset');
         CF01_Authorization::consent($patient_uuid, 'images');
         $encounter = CF01_Encounters::get($encounter_uuid);
         if ((string) $encounter['patient_uuid'] !== $patient_uuid) {
             throw new RuntimeException('Wrong-patient attachment relation was blocked.');
         }
+        CF01_Authorization::relationship_for_record($patient_uuid, $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'attach_clinical_asset');
         foreach (array('asset_reference', 'sha256', 'declared_type', 'source') as $field) {
             if (empty($asset[$field])) {
                 throw new InvalidArgumentException('Attachment provenance is incomplete.');
@@ -56,7 +57,7 @@ final class CF01_Attachments {
 
     public static function review_scan(int $actor_id, string $uuid, string $status, array $scanner_evidence, int $expected_version): array {
         $row = self::get($uuid);
-        CF01_Authorization::actor($actor_id, 'review_attachment');
+        CF01_Authorization::actor($actor_id, 'review_attachment', array('patient_uuid' => (string) $row['patient_uuid'], 'attachment_uuid' => $uuid));
         CF01_Authorization::expected_version($row, $expected_version);
         if (!in_array($status, array('ready', 'rejected'), true)) {
             throw new InvalidArgumentException('Scanner result must be ready or rejected.');
@@ -78,7 +79,11 @@ final class CF01_Attachments {
 
     public static function delivery_reference(int $actor_id, string $uuid): string {
         $row = self::get($uuid);
-        CF01_Authorization::actor($actor_id, 'view_attachment');
+        $context = CF01_Role_Context::resolve($actor_id, (string) $row['patient_uuid'], 'clinical_care');
+        $allowed = CF01_Role_Context::fields($context, array('attachments'));
+        if (!in_array('attachments', $allowed, true)) {
+            throw new RuntimeException('Clinical attachment access is unavailable for this patient context.');
+        }
         if (($row['scan_status'] ?? '') !== 'ready') {
             throw new RuntimeException('Unscanned or quarantined clinical attachment cannot be delivered.');
         }
@@ -90,6 +95,8 @@ final class CF01_Attachments {
             'asset_reference' => $reference,
             'purpose' => 'clinical_attachment_view',
             'actor_user_id' => $actor_id,
+            'actor_role' => (string) $context['role'],
+            'object_uuid' => $uuid,
             'patient_uuid' => $row['patient_uuid'],
             'ttl_seconds' => 300,
             'no_store' => true,
@@ -103,12 +110,16 @@ final class CF01_Attachments {
 
     public static function relink(int $actor_id, string $uuid, string $new_patient_uuid, string $new_encounter_uuid, int $expected_version): array {
         $row = self::get($uuid);
-        CF01_Authorization::actor($actor_id, 'relink_attachment');
+        CF01_Authorization::actor($actor_id, 'relink_attachment', array('patient_uuid' => (string) $row['patient_uuid'], 'attachment_uuid' => $uuid));
+        CF01_Role_Context::resolve($actor_id, (string) $row['patient_uuid'], 'clinical_integrity', 'records');
         CF01_Authorization::expected_version($row, $expected_version);
         $encounter = CF01_Encounters::get($new_encounter_uuid);
         if ((string) $encounter['patient_uuid'] !== $new_patient_uuid || (string) $row['patient_uuid'] !== $new_patient_uuid) {
             CF01_Audit::record($actor_id, 'ClinicalAttachmentRelinkBlocked', 'clinical_attachment', $uuid, 'clinical_integrity', array());
             throw new RuntimeException('Cross-patient attachment relink is prohibited.');
+        }
+        if (($encounter['status'] ?? '') === 'entered_in_error') {
+            throw new RuntimeException('Attachment cannot be relinked to an entered-in-error encounter.');
         }
         $ok = CF01_DB::update_versioned('attachments', array('encounter_uuid' => $new_encounter_uuid), array('attachment_uuid' => $uuid), $expected_version);
         if (!$ok) {
