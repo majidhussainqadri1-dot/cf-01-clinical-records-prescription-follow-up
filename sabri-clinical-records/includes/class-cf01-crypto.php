@@ -3,6 +3,9 @@ defined('ABSPATH') || exit;
 
 final class CF01_Crypto {
     private const CIPHER = 'aes-256-gcm';
+    private const ENVELOPE_VERSION = 2;
+    private const CRYPTO_CONTEXT_VERSION = '1';
+    private const LEGACY_RUNTIME_VERSION = '1.0.0';
 
     public static function available(): bool {
         return self::encryption_key(self::current_key_version()) !== null
@@ -12,7 +15,6 @@ final class CF01_Crypto {
 
     /**
      * Stable root key used for blind indexes and signatures.
-     *
      * Encryption subkeys are versioned separately so envelope-key rotation does
      * not invalidate identity indexes or signed clinical provenance.
      */
@@ -39,33 +41,47 @@ final class CF01_Crypto {
         if ($key === null) {
             throw new RuntimeException('CF-01 encryption key is unavailable.');
         }
+        $purpose = self::normalize_purpose($purpose);
         $plaintext = wp_json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (!is_string($plaintext)) {
             throw new RuntimeException('Clinical value serialization failed.');
         }
         $iv = random_bytes(12);
         $tag = '';
-        $aad = 'cf01|' . CF01_VERSION . '|' . $purpose . '|key:' . $key_version;
+        $aad = self::aad($purpose, $key_version, self::CRYPTO_CONTEXT_VERSION);
         $ciphertext = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag, $aad, 16);
-        if (!is_string($ciphertext)) {
+        if (!is_string($ciphertext) || strlen($tag) !== 16) {
             throw new RuntimeException('Clinical encryption failed.');
         }
-        return base64_encode(wp_json_encode(array(
-            'v' => 1,
+        $encoded = wp_json_encode(array(
+            'v' => self::ENVELOPE_VERSION,
+            'cv' => self::CRYPTO_CONTEXT_VERSION,
             'kv' => $key_version,
             'alg' => self::CIPHER,
             'iv' => base64_encode($iv),
             'tag' => base64_encode($tag),
             'ct' => base64_encode($ciphertext),
             'aad' => hash('sha256', $aad),
-        ), JSON_UNESCAPED_SLASHES));
+        ), JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded)) {
+            throw new RuntimeException('Clinical encryption envelope serialization failed.');
+        }
+        return base64_encode($encoded);
     }
 
     public static function decrypt(string $envelope, string $purpose) {
         $json = base64_decode($envelope, true);
         $payload = is_string($json) ? json_decode($json, true) : null;
-        if (!is_array($payload) || (int) ($payload['v'] ?? 0) !== 1) {
+        if (!is_array($payload)) {
             throw new RuntimeException('Invalid clinical encryption envelope.');
+        }
+
+        $envelope_version = (int) ($payload['v'] ?? 0);
+        if (!in_array($envelope_version, array(1, self::ENVELOPE_VERSION), true)) {
+            throw new RuntimeException('Unsupported clinical encryption envelope version.');
+        }
+        if (!hash_equals(self::CIPHER, (string) ($payload['alg'] ?? ''))) {
+            throw new RuntimeException('Unsupported clinical encryption algorithm.');
         }
 
         $key_version = max(1, (int) ($payload['kv'] ?? 1));
@@ -77,27 +93,44 @@ final class CF01_Crypto {
         $iv = base64_decode((string) ($payload['iv'] ?? ''), true);
         $tag = base64_decode((string) ($payload['tag'] ?? ''), true);
         $ciphertext = base64_decode((string) ($payload['ct'] ?? ''), true);
-        if (!is_string($iv) || strlen($iv) !== 12 || !is_string($tag) || strlen($tag) !== 16 || !is_string($ciphertext)) {
+        if (!is_string($iv) || strlen($iv) !== 12 || !is_string($tag) || strlen($tag) !== 16 || !is_string($ciphertext) || $ciphertext === '') {
             throw new RuntimeException('Corrupt clinical encryption envelope.');
         }
 
-        $aad = 'cf01|' . CF01_VERSION . '|' . $purpose . '|key:' . $key_version;
-        $legacy_aad = 'cf01|' . CF01_VERSION . '|' . $purpose;
-        $expected_aad = (string) ($payload['aad'] ?? '');
+        $purpose = self::normalize_purpose($purpose);
+        $expected_aad = strtolower(trim((string) ($payload['aad'] ?? '')));
+        if (!preg_match('/^[a-f0-9]{64}$/', $expected_aad)) {
+            throw new RuntimeException('Corrupt clinical encryption authentication context.');
+        }
+
+        if ($envelope_version === self::ENVELOPE_VERSION) {
+            $context_version = (string) ($payload['cv'] ?? '');
+            if (!hash_equals(self::CRYPTO_CONTEXT_VERSION, $context_version)) {
+                throw new RuntimeException('Unsupported clinical encryption context version.');
+            }
+            $aad = self::aad($purpose, $key_version, $context_version);
+        } else {
+            // Version-1 envelopes were created by release 1.0.0 and bound AAD
+            // to that runtime value. Keep this explicit compatibility path so a
+            // future plugin version cannot make existing clinical data unreadable.
+            $aad = array_key_exists('kv', $payload)
+                ? 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose . '|key:' . $key_version
+                : 'cf01|' . self::LEGACY_RUNTIME_VERSION . '|' . $purpose;
+        }
 
         if (!hash_equals(hash('sha256', $aad), $expected_aad)) {
-            if (!array_key_exists('kv', $payload) && hash_equals(hash('sha256', $legacy_aad), $expected_aad)) {
-                $aad = $legacy_aad;
-            } else {
-                throw new RuntimeException('Clinical encryption purpose mismatch.');
-            }
+            throw new RuntimeException('Clinical encryption purpose mismatch.');
         }
 
         $plaintext = openssl_decrypt($ciphertext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag, $aad);
         if (!is_string($plaintext)) {
             throw new RuntimeException('Clinical decryption failed.');
         }
-        return json_decode($plaintext, true, 512, JSON_THROW_ON_ERROR);
+        try {
+            return json_decode($plaintext, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $error) {
+            throw new RuntimeException('Clinical decrypted value is invalid.', 0, $error);
+        }
     }
 
     public static function rotate_key(int $actor_id, string $reason): int {
@@ -156,7 +189,8 @@ final class CF01_Crypto {
     }
 
     public static function verify(array $snapshot, string $purpose, string $signature): bool {
-        return hash_equals(self::sign($snapshot, $purpose), $signature);
+        return preg_match('/^[a-f0-9]{64}$/', $signature) === 1
+            && hash_equals(self::sign($snapshot, $purpose), strtolower($signature));
     }
 
     public static function canonical_json(array $data): string {
@@ -166,6 +200,18 @@ final class CF01_Crypto {
             throw new RuntimeException('Clinical canonical serialization failed.');
         }
         return $json;
+    }
+
+    private static function aad(string $purpose, int $key_version, string $context_version): string {
+        return 'cf01|crypto:' . $context_version . '|' . $purpose . '|key:' . $key_version;
+    }
+
+    private static function normalize_purpose(string $purpose): string {
+        $purpose = sanitize_key($purpose);
+        if ($purpose === '' || strlen($purpose) > 96) {
+            throw new InvalidArgumentException('A valid bounded clinical encryption purpose is required.');
+        }
+        return $purpose;
     }
 
     private static function encryption_key(int $version): ?string {
