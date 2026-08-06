@@ -15,6 +15,8 @@ This record triggers and preserves fresh exact-head verification after the compl
 
 The forty-round review register has been reconciled with the hardened record-bound authorization law. It now verifies `relationship_for_record()` for entered-in-error and prescription paths rather than retaining the superseded broad-relationship static marker.
 
+Representative identity review now validates the current patient-scoped guardian role assertion and constant-time representative-reference comparison, replacing the obsolete local `$same_actor` marker.
+
 ## Evidence law
 
 The exact successful commit, workflow run, retained artifact and checksums are recorded in GitHub Actions and pull-request evidence after the last source commit. This committed file does not predict the SHA of its own future commit.
