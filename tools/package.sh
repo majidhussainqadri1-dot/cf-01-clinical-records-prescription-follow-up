@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1785792000}"
-VERSION="1.0.0"
+VERSION="1.0.1"
 NAME="cf-01-clinical-records-prescription-follow-up-${VERSION}"
 BUILD="${ROOT}/build"
 STAGE="${BUILD}/stage/sabri-clinical-records"
