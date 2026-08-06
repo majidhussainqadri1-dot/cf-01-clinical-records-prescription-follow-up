@@ -14,10 +14,17 @@ $check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Stagi
 $check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Live-Deployed: pending'), 'Live deployment must not be falsely claimed.');
 $check(str_contains(file_get_contents($root . '/docs/RELEASE-STATUS.md'), 'Operational: pending'), 'Operational status must not be falsely claimed.');
 $main = file_get_contents($root . '/sabri-clinical-records/sabri-clinical-records.php');
-$check(str_contains($main, 'Version: 1.0.0'), 'Plugin version mismatch.');
+$check(str_contains($main, 'Version: 1.0.1'), 'Plugin runtime version mismatch.');
+$check(str_contains($main, "define('CF01_VERSION', '1.0.1')"), 'Runtime constant mismatch.');
+$check(str_contains($main, "define('CF01_SCHEMA_VERSION', '1.0.0')"), 'Schema compatibility version mismatch.');
+$check(str_contains($main, "define('CF01_CONTRACT_VERSION', '1.0.0')"), 'Contract compatibility version mismatch.');
 $check(str_contains($main, 'Requires PHP: 8.1'), 'Minimum PHP mismatch.');
 $check(str_contains($main, "update_option('cf01_activation_state', 'disabled'"), 'Activation must default disabled.');
 $check(str_contains($main, 'CF01_SCHEMA_INSTALL_APPROVED'), 'Schema must not install without approval.');
+$readme = file_get_contents($root . '/sabri-clinical-records/readme.txt');
+$check(str_contains($readme, 'Stable tag: 1.0.1'), 'WordPress stable tag mismatch.');
+$package = file_get_contents($root . '/tools/package.sh');
+$check(str_contains($package, 'VERSION="1.0.1"'), 'Package version mismatch.');
 $rest = file_get_contents($root . '/sabri-clinical-records/includes/class-cf01-rest.php');
 $check(substr_count($rest, 'register_rest_route') === 1, 'REST route registration should be centralized.');
 $check(str_contains($rest, 'permission_callback'), 'REST permissions missing.');
@@ -35,7 +42,6 @@ foreach (array(':focus-visible','prefers-reduced-motion','forced-colors','[dir="
 $js = file_get_contents($root . '/sabri-clinical-records/assets/js/clinical.js');
 foreach (array("cache: 'no-store'", "credentials: 'same-origin'", "redirect: 'error'", "referrerPolicy: 'no-referrer'", 'AbortController', 'pagehide') as $token) $check(str_contains($js, $token), 'Browser privacy/reliability token missing: ' . $token);
 foreach (array('localStorage','sessionStorage','indexedDB','serviceWorker','document.cookie') as $token) $check(!str_contains($js, $token), 'Forbidden browser persistence: ' . $token);
-$package = file_get_contents($root . '/tools/package.sh');
 foreach (array('SOURCE_DATE_EPOCH','MANIFEST.sha256','zip -X','sha256sum') as $token) $check(str_contains($package, $token), 'Deterministic package invariant missing: ' . $token);
 if ($failures) { fwrite(STDERR, implode("\n", $failures) . "\n"); exit(1); }
 
@@ -49,10 +55,7 @@ $retentionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-retention.p
 $check(str_contains($retentionSource, 'hold placer cannot release') && str_contains($retentionSource, 'approved_by_user_id'), 'Retention dual control missing.');
 $prescriptionSource = file_get_contents(CF01_DIR . 'includes/class-cf01-prescriptions.php');
 $check(str_contains($prescriptionSource, 'PrescriptionSupersessionCompensated'), 'Supersession compensation missing.');
-
 $orchestrator = file_get_contents(CF01_DIR . 'includes/class-cf01-release-orchestrator.php');
-foreach (array('validate_native_owner_contracts', 'compensate_activation', 'extract_file08_batch', 'rollback_migration') as $token) {
-    $check(str_contains($orchestrator, $token), 'Round-4 release orchestration invariant missing: ' . $token);
-}
-
+foreach (array('validate_native_owner_contracts', 'compensate_activation', 'extract_file08_batch', 'rollback_migration') as $token) $check(str_contains($orchestrator, $token), 'Round-4 release orchestration invariant missing: ' . $token);
+if ($failures) { fwrite(STDERR, implode("\n", $failures) . "\n"); exit(1); }
 echo "CF-01 fresh independent review: {$count} PASS, 0 FAIL\n";
