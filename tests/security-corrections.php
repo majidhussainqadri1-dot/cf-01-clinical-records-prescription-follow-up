@@ -35,10 +35,12 @@ $assert(str_contains($authorization, 'function_exists(\'user_can\')'), 'Explicit
 $assert(str_contains($authorization, '\'record_own_consent\''), 'Patient consent must use a dedicated own-subject action.');
 $assert(str_contains($authorization, '\'view_own_access_history\''), 'Patient access history must use a dedicated own-subject action.');
 
-$assert(str_contains($consents, '&& !empty($guardian[\'platform_uuid\'])'), 'Guardian authorization must bind to a verified platform identity.');
+$assert(str_contains($consents, 'CF01_Role_Context::resolve($actor_id, $patient_uuid, $purpose, \'guardian\')'), 'Guardian authorization must use a current patient-scoped role assertion.');
+$assert(str_contains($consents, 'CF01_Contracts::guardian_authority($actor_id, $patient_uuid, $purpose'), 'Guardian authorization must be revalidated against the native identity authority.');
 $assert(!str_contains($consents, '$guardian_actor || $guardian_reference'), 'A disclosed guardian reference must never authorize an unrelated actor.');
 $assert(str_contains($consents, 'apply_filters(\'cf01_legal_majority_age\''), 'Legal-majority age must be jurisdiction-policy configurable.');
 $assert(str_contains($consents, 'CF01_Authorization::actor($actor_id, \'record_own_consent\')'), 'Own or guardian consent action must recheck current actor eligibility.');
+$assert(str_contains($consents, 'Clinical age evidence is unavailable.'), 'Missing age evidence must fail closed for minor governance.');
 
 $assert(str_contains($relationships, 'authorize_relationship_actor($actor_id, $row'), 'Every relationship activation or transition must authorize the current actor.');
 $assert(str_contains($relationships, 'require_target_practitioner'), 'Assigned doctor eligibility must be checked without actor impersonation.');
@@ -47,7 +49,7 @@ $assert(str_contains($relationships, 'function_exists(\'user_can\')') && str_con
 
 $assert(str_contains($encounters, 'CF01_Authorization::consent($patient_uuid, \'teleconsultation\')'), 'Teleconsultation encounters must require teleconsultation consent.');
 $assert(str_contains($encounters, 'array(\'status\' => \'addended\')'), 'Adding an addendum must version and mark its signed parent.');
-$assert(str_contains($encounters, 'mark_entered_in_error') && str_contains($encounters, 'CF01_Authorization::relationship((string) $row[\'patient_uuid\'], $actor_id, \'clinical_care\')'), 'Entered-in-error action must remain relationship-scoped.');
+$assert(str_contains($encounters, 'mark_entered_in_error') && str_contains($encounters, 'relationship_for_record'), 'Entered-in-error action must remain bound to the exact treating relationship.');
 $assert(str_contains($encounters, 'return CF01_DB::transaction(function () use ($actor_id, $old, $observation_uuid'), 'Observation replacement and supersession must be atomic.');
 $assert(str_contains($encounters, 'A new assessment requires an open encounter.'), 'Assessment creation must reject closed or tombstoned encounters.');
 $assert(str_contains($encounters, 'Assessment must be signed while its encounter remains open.'), 'Assessment signing must remain encounter-state bound.');
@@ -56,6 +58,7 @@ $assert(str_contains($breakGlass, 'CF01_Patients::get($patient_uuid);'), 'Break-
 $assert(str_contains($breakGlass, 'CF01_Authorization::clinician($actor_id, \'use_break_glass\''), 'Break-glass reads must recheck current professional eligibility.');
 $assert(str_contains($breakGlass, 'array_intersect(array_map(\'sanitize_key\', $requested_fields), $granted_fields)'), 'Break-glass reads must not exceed fields authorized at grant time.');
 $assert(str_contains($breakGlass, 'if (!$updated) {') && str_contains($breakGlass, 'BreakGlassExpired'), 'Break-glass expiry events must only emit after a successful state transition.');
+$assert(str_contains($breakGlass, 'break_glass_actor') && str_contains($breakGlass, 'break_glass_patient'), 'Break-glass must enforce actor and patient-target abuse controls.');
 
 $assert(str_contains($rights, 'CF01_Authorization::actor($actor_id, \'request_clinical_right\')'), 'Every rights request, including self-service, must recheck actor eligibility.');
 $assert(str_contains($rights, 'guardian_or_representative($actor_id, $patient_uuid'), 'Representative checks must use the explicit requesting actor.');
