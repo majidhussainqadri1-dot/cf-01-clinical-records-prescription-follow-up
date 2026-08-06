@@ -17,6 +17,7 @@ $css = $read('sabri-clinical-records/assets/css/clinical.css');
 $js = $read('sabri-clinical-records/assets/js/clinical.js');
 $rest = $read('sabri-clinical-records/includes/class-cf01-rest.php');
 $patients = $read('sabri-clinical-records/includes/class-cf01-patients.php');
+$crypto = $read('sabri-clinical-records/includes/class-cf01-crypto.php');
 $authorization = $read('sabri-clinical-records/includes/class-cf01-authorization.php');
 $contracts = $read('sabri-clinical-records/includes/class-cf01-contracts.php');
 $roles = $read('sabri-clinical-records/includes/class-cf01-role-context.php');
@@ -29,7 +30,6 @@ $followups = $read('sabri-clinical-records/includes/class-cf01-followups.php');
 $rights = $read('sabri-clinical-records/includes/class-cf01-rights.php');
 $migrations = $read('sabri-clinical-records/includes/class-cf01-migrations.php');
 $breakGlass = $read('sabri-clinical-records/includes/class-cf01-break-glass.php');
-
 
 $check(str_contains($css, '--cf01-primary:'), 'Green primary token is missing.');
 $check(str_contains($css, '#0b6b3a'), 'Approved green fallback is missing.');
@@ -60,6 +60,13 @@ $check(str_contains($rest, "'Referrer-Policy' => 'no-referrer'"), 'Private REST 
 $check(str_contains($patients, 'for_platform_subject'), 'Canonical own-record resolver is missing.');
 $check(str_contains($patients, "status NOT IN (%s,%s)"), 'Quarantined/merged clinical identities are not excluded.');
 
+$check(str_contains($crypto, 'function current_key_version'), 'Versioned clinical encryption-key selection is missing.');
+$check(str_contains($crypto, "'kv' => \$key_version"), 'Clinical encryption envelopes do not record their key version.');
+$check(str_contains($crypto, "!array_key_exists('kv', \$payload)"), 'Legacy clinical encryption envelopes are not backward-readable after rotation.');
+$check(str_contains($crypto, 'function rotate_key'), 'Governed clinical encryption-key rotation is missing.');
+$check(str_contains($crypto, 'function encryption_key'), 'Versioned encryption subkey derivation is missing.');
+$check(str_contains($crypto, 'Required historical clinical encryption key is unavailable.'), 'Missing historical key material does not fail closed.');
+
 $check(str_contains($contracts, 'function relationship_source'), 'Canonical relationship-source assertion is missing.');
 $check(str_contains($contracts, 'function subject_identity'), 'Subject identity assertion contract is missing.');
 $check(str_contains($contracts, 'function guardian_authority'), 'Guardian-authority assertion contract is missing.');
@@ -73,6 +80,8 @@ $check(str_contains($authorization, 'validate_relationship_scope'), 'Treating re
 $check(str_contains($authorization, 'enforce_rate_limit'), 'Clinical abuse/rate-limit control is missing.');
 $check(str_contains($authorization, "'consume_clinical_export'"), 'High-risk export consumption is not step-up governed.');
 $check(str_contains($authorization, "'relink_attachment'"), 'High-risk attachment relink is not step-up governed.');
+$check(str_contains($authorization, "'rotate_clinical_key'"), 'Clinical encryption-key rotation is not step-up governed.');
+$check(str_contains($authorization, "'cf01_manage_clinical_keys'"), 'Clinical encryption-key rotation lacks a dedicated capability.');
 $check(str_contains($roles, "if (\$requested_role === '' || \$requested_role !== \$role)"), 'Care-team roles may still be inferred without an explicit requested role.');
 $check(str_contains($roles, 'cf01_clinical_oversight_assertion'), 'Patient-scoped records/auditor oversight assertion is missing.');
 
