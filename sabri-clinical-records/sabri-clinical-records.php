@@ -40,7 +40,6 @@ $cf01_files = array(
     'class-cf01-rest.php',
     'class-cf01-lifecycle-rest.php',
     'class-cf01-ui-health.php',
-    'class-cf01-runtime-privacy.php',
     'class-cf01-migrations.php',
 );
 
@@ -50,10 +49,11 @@ foreach ($cf01_files as $cf01_file) {
 unset($cf01_files, $cf01_file);
 
 final class CF01_Plugin {
+    private const REST_PREFIX = '/clinical/v1/';
+
     public static function boot(): void {
         CF01_Activation_Evidence::register();
         CF01_Release_Orchestrator::register();
-        CF01_Runtime_Privacy::register();
         add_action('plugins_loaded', array(__CLASS__, 'plugins_loaded'));
         add_action('init', array('CF01_UI', 'register'));
         add_action('rest_api_init', array('CF01_REST', 'register_routes'));
@@ -61,6 +61,9 @@ final class CF01_Plugin {
         add_action('cf01_process_outbox', array('CF01_Outbox', 'process'));
         add_action('cf01_retention_reconcile', array('CF01_Retention', 'reconcile'));
         add_action('cf01_followup_reconcile', array('CF01_Followups', 'reconcile_due'));
+        add_action('send_headers', array(__CLASS__, 'send_private_headers'), 0);
+        add_filter('rest_post_dispatch', array(__CLASS__, 'harden_rest_response'), 999, 3);
+        add_filter('rest_pre_serve_request', array(__CLASS__, 'send_rest_headers'), 0, 4);
         add_filter('wp_robots', array(__CLASS__, 'private_robots'));
     }
 
@@ -96,6 +99,75 @@ final class CF01_Plugin {
             $robots['noimageindex'] = true;
         }
         return $robots;
+    }
+
+    public static function send_private_headers(): void {
+        if (CF01_UI::is_clinical_request()) {
+            self::emit_private_headers();
+        }
+    }
+
+    public static function send_rest_headers(bool $served, $result, WP_REST_Request $request, WP_REST_Server $server): bool {
+        unset($result, $server);
+        if (self::is_clinical_rest_request($request)) {
+            self::emit_private_headers();
+        }
+        return $served;
+    }
+
+    public static function harden_rest_response($response, WP_REST_Server $server, WP_REST_Request $request) {
+        unset($server);
+        if (!self::is_clinical_rest_request($request)) {
+            return $response;
+        }
+        $response = rest_ensure_response($response);
+        foreach (self::private_headers() as $name => $value) {
+            $response->header($name, $value);
+        }
+        $status = (int) $response->get_status();
+        if ($status >= 500 && !self::may_expose_diagnostics()) {
+            $data = $response->get_data();
+            $code = is_array($data) && isset($data['code']) ? sanitize_key((string) $data['code']) : 'cf01_internal_error';
+            $response->set_data(array(
+                'code' => $code ?: 'cf01_internal_error',
+                'message' => __('The clinical service could not complete this request.', 'sabri-clinical-records'),
+                'data' => array('status' => $status),
+            ));
+        }
+        return $response;
+    }
+
+    private static function is_clinical_rest_request(WP_REST_Request $request): bool {
+        $route = '/' . ltrim((string) $request->get_route(), '/');
+        return str_starts_with($route, self::REST_PREFIX);
+    }
+
+    private static function may_expose_diagnostics(): bool {
+        return defined('WP_DEBUG') && WP_DEBUG === true
+            && current_user_can('cf01_view_clinical_health')
+            && (bool) apply_filters('cf01_allow_runtime_diagnostics', false);
+    }
+
+    private static function emit_private_headers(): void {
+        if (headers_sent()) {
+            return;
+        }
+        foreach (self::private_headers() as $name => $value) {
+            header($name . ': ' . $value, true);
+        }
+    }
+
+    private static function private_headers(): array {
+        return array(
+            'Cache-Control' => 'private, no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+            'Referrer-Policy' => 'no-referrer',
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Frame-Options' => 'DENY',
+            'Cross-Origin-Resource-Policy' => 'same-origin',
+            'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+        );
     }
 }
 
