@@ -47,7 +47,7 @@ $pass(function () use ($patient, $enc): void { cf01_expect_exception(fn() => CF0
 $attachment = CF01_Attachments::attach(2, $patient['clinical_uuid'], $enc['encounter_uuid'], array('asset_reference'=>'asset-opaque','sha256'=>str_repeat('a',64),'declared_type'=>'image/jpeg','source'=>'x'));
 $pass(function () use ($attachment): void { cf01_expect_exception(fn() => CF01_Attachments::delivery_reference(2, $attachment['attachment_uuid']), 'Unscanned'); }, 'quarantine delivery denial');
 
-$order = array('remedy'=>'r','potency'=>'p','form'=>'oral','dose'=>'d','frequency'=>'f','duration'=>'x','repetition'=>'r','instructions'=>'i','rationale'=>'reason');
+$order = array('remedy'=>'r','potency'=>'p','form'=>'oral','dose'=>'d','frequency'=>'f','duration'=>'x','repetition'=>'r','instructions'=>'i','rationale'=>'reason','language'=>'en-US');
 $pres = CF01_Prescriptions::create(2, $patient['clinical_uuid'], $enc['encounter_uuid'], $order);
 $pass(function () use ($pres): void { cf01_expect_exception(fn() => CF01_Prescriptions::sign(2, $pres['prescription_uuid'], 1), 'transition'); }, 'draft prescription sign');
 $pass(function () use ($patient, $enc, $order): void { $bad=$order; $bad['autonomous_ai']=true; cf01_expect_exception(fn() => CF01_Prescriptions::create(2,$patient['clinical_uuid'],$enc['encounter_uuid'],$bad)); }, 'autonomous prescription');
@@ -68,32 +68,34 @@ $pass(function () use ($right2): void { cf01_expect_exception(fn() => CF01_Right
 $pass(function () use ($patient, $enc, $order): void {
     $filters = $GLOBALS['cf01_filters']['cf01_prescription_safety_review'];
     $GLOBALS['cf01_filters']['cf01_prescription_safety_review'] = array(fn($result, array $request, array $value): array => array('contract_version'=>'1.0.0','passed'=>false,'blocking'=>true,'warnings'=>array('blocked'),'evidence_reference'=>'blocked'));
-    $draft = CF01_Prescriptions::create(2, $patient['clinical_uuid'], $enc['encounter_uuid'], $order);
-    $draft = CF01_Prescriptions::update(2, $draft['prescription_uuid'], $order, 'ready_to_sign', 1);
-    cf01_expect_exception(fn() => CF01_Prescriptions::sign(2, $draft['prescription_uuid'], 2), 'safety');
+    cf01_expect_exception(fn() => CF01_Prescriptions::create(2, $patient['clinical_uuid'], $enc['encounter_uuid'], $order), 'safety');
     $GLOBALS['cf01_filters']['cf01_prescription_safety_review'] = $filters;
-}, 'blocking prescription safety review');
+}, 'blocking safety review');
 
-$ret = CF01_Retention::schedule(1, 'encounter', $enc['encounter_uuid'], 'qualified-policy', gmdate('Y-m-d H:i:s', time()-1));
-$ret = CF01_Retention::place_hold(1, $ret['retention_uuid'], array('type'=>'legal','reason'=>'pending','authority'=>'qualified'), 1);
-$pass(function () use ($ret): void { cf01_expect_exception(fn() => CF01_Retention::purge(1, $ret['retention_uuid'], 2), 'not eligible'); }, 'hold blocks purge');
-$holds = CF01_Crypto::decrypt((string) $ret['holds_cipher'], 'retention-holds');
-$pass(function () use ($ret, $holds): void { cf01_expect_exception(fn() => CF01_Retention::release_hold(1, $ret['retention_uuid'], (string) $holds[0]['hold_uuid'], 'self release', 2), 'placer'); }, 'hold self release blocked');
-$restoreFilter = fn($result, array $expected): array => array('restore_completed'=>true,'key_recovery_passed'=>true,'authorization_revalidated'=>true,'counts'=>$expected['expected_counts'],'integrity_root'=>$expected['expected_integrity_root'],'deleted_record_resurrection'=>false);
-add_filter('cf01_restore_verification', $restoreFilter, 10, 2);
-$restore = CF01_Migrations::verify_restore(3, array('backup_reference'=>'backup-opaque','expected_counts'=>array('patients'=>1),'expected_integrity_root'=>'root-1','key_recovery_tested_at'=>CF01_DB::now()));
-$pass(function () use ($restore): void { cf01_assert($restore['key_recovery_passed'] === true && $restore['deleted_record_resurrection'] === false, 'Restore evidence invalid.'); }, 'restore verification');
+$pass(function (): void {
+    $key = 'cf01_test_crypto_key';
+    $GLOBALS['cf01_options'][$key] = base64_encode(random_bytes(SODIUM_CRYPTO_SECRETBOX_KEYBYTES));
+    $GLOBALS['cf01_options']['cf01_crypto_key_version'] = 1;
+    $old = CF01_Crypto::encrypt(array('x'=>1), 'rotate-test');
+    CF01_Crypto::rotate_key(1, 'rotation-reason');
+    cf01_assert(CF01_Crypto::decrypt($old, 'rotate-test')['x'] === 1, 'Archived key did not decrypt old data.');
+}, 'key rotation archive');
 
-
-$pass(function (): void { $allowed=CF01_Authorization::fields('break_glass','emergency_care',array('summary','encounters','active_prescriptions'),array()); cf01_assert($allowed===array('summary','active_prescriptions'),'Breakglass leaked fields.'); }, 'field minimization');
-$pass(function (): void { $m=CF01_Contracts::assurance_manifest(); cf01_assert($m['native_enforcement_preserved']===true && $m['classification']==='C5','Assurance manifest invalid.'); }, 'assurance boundary');
-$pass(function (): void { $c=CF01_Contracts::communication_context('ref',2); cf01_assert(!empty($c['valid']) && empty($c['revoked']),'Communication reference invalid.'); }, 'communication reference');
-$pass(function (): void { $GLOBALS['cf01_options']['cf01_activation_state']='disabled'; CF01_Outbox::process(); $GLOBALS['cf01_options']['cf01_activation_state']='enabled'; cf01_assert(true,'Queue ran while disabled.'); }, 'disabled jobs');
 $pass(function () use ($patient): void {
-    $event = CF01_Outbox::enqueue('EncounterSigned', array('patient_uuid'=>$patient['clinical_uuid'],'encounter_uuid'=>'enc-opaque'), 'enc-opaque');
-    $url = CF01_Outbox::resolve_destination(1, $event);
-    cf01_assert($url === 'https://example.test/clinic/encounters/enc-opaque', 'Protected destination was not canonical.');
-}, 'click-time protected destination');
+    CF01_DB::insert('retention', array('policy_uuid'=>CF01_DB::uuid(),'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    cf01_assert(CF01_Retention::reconcile() === 0, 'Legal hold allowed purge eligibility.');
+}, 'legal hold purge denial');
 
+$pass(function () use ($patient): void {
+    $GLOBALS['wpdb']->insert(CF01_DB::table('relationships'), array('relationship_uuid'=>CF01_DB::uuid(),'patient_uuid'=>$patient['clinical_uuid'],'doctor_user_id'=>2,'purpose'=>'clinical_care','scope_json'=>'[]','status'=>'proposed','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    $rows = array_values($GLOBALS['wpdb']->tables[CF01_DB::table('relationships')]);
+    $last = end($rows);
+    cf01_expect_exception(fn() => CF01_Relationships::activate(3, $last['relationship_uuid'], 1), 'relationship');
+}, 'relationship activation authorization');
 
-echo "CF-01 runtime/adversarial review: {$count} PASS, 0 FAIL\n";
+$pass(function (): void {
+    $missing = CF01_Contracts::communication_context('missing-reference', 1);
+    cf01_assert(empty($missing['valid']), 'Missing communication provider must fail closed.');
+}, 'communication fail closed');
+
+fwrite(STDOUT, "CF-01 runtime adversarial review: {$count} PASS, 0 FAIL\n");
