@@ -15,7 +15,7 @@ final class CF01_Audit {
     }
 
     public static function access(int $actor_id, string $patient_uuid, string $action, string $object_type, string $object_uuid, string $purpose, string $result): void {
-        $event_uuid = self::write($actor_id, $action, $object_type, $object_uuid, $purpose, array('patient_uuid' => $patient_uuid), $result);
+        $event_uuid = self::write($actor_id, $action, $object_type, $object_uuid, $purpose, $metadata = array('patient_uuid' => $patient_uuid), $result);
         CF01_DB::insert('access', array(
             'event_uuid' => $event_uuid,
             'patient_uuid' => $patient_uuid,
@@ -30,42 +30,46 @@ final class CF01_Audit {
     }
 
     private static function write(int $actor_id, string $action, string $object_type, string $object_uuid, string $purpose, array $metadata, string $result): string {
-        $uuid = CF01_DB::uuid();
-        $previous = CF01_DB::row('SELECT chain_hash FROM ' . CF01_DB::table('audit') . ' ORDER BY id DESC LIMIT 1');
-        $previous_hash = (string) ($previous['chain_hash'] ?? str_repeat('0', 64));
-        $record = array(
-            'event_uuid' => $uuid,
-            'actor_pseudonym' => self::actor_pseudonym($actor_id),
-            'action' => sanitize_key($action),
-            'object_type' => sanitize_key($object_type),
-            'object_uuid' => $object_uuid,
-            'purpose' => sanitize_key($purpose),
-            'result' => sanitize_key($result),
-            'metadata' => self::minimize($metadata),
-            'occurred_at' => CF01_DB::now(),
-            'previous_hash' => $previous_hash,
-        );
-        $record_hash = hash('sha256', CF01_Crypto::canonical_json($record));
-        $chain_hash = hash('sha256', $previous_hash . '|' . $record_hash);
-        try {
-            CF01_DB::insert('audit', array(
+        return CF01_DB::transaction(function () use ($actor_id, $action, $object_type, $object_uuid, $purpose, $metadata, $result): string {
+            $uuid = CF01_DB::uuid();
+            // Serialize the append point. InnoDB keeps this record/gap lock until the
+            // surrounding clinical transaction commits, preventing concurrent forks.
+            $previous = CF01_DB::row('SELECT chain_hash FROM ' . CF01_DB::table('audit') . ' ORDER BY id DESC LIMIT 1 FOR UPDATE');
+            $previous_hash = (string) ($previous['chain_hash'] ?? str_repeat('0', 64));
+            $record = array(
                 'event_uuid' => $uuid,
-                'actor_pseudonym' => $record['actor_pseudonym'],
-                'action' => $record['action'],
-                'object_type' => $record['object_type'],
+                'actor_pseudonym' => self::actor_pseudonym($actor_id),
+                'action' => sanitize_key($action),
+                'object_type' => sanitize_key($object_type),
                 'object_uuid' => $object_uuid,
-                'purpose' => $record['purpose'],
-                'result' => $record['result'],
-                'metadata_cipher' => CF01_Crypto::encrypt($record['metadata'], 'audit-metadata'),
-                'record_hash' => $record_hash,
+                'purpose' => sanitize_key($purpose),
+                'result' => sanitize_key($result),
+                'metadata' => self::minimize($metadata),
+                'occurred_at' => CF01_DB::now(),
                 'previous_hash' => $previous_hash,
-                'chain_hash' => $chain_hash,
-                'occurred_at' => $record['occurred_at'],
-            ));
-        } catch (Throwable $error) {
-            throw new RuntimeException('Clinical audit persistence failed; action cannot be treated as complete.', 0, $error);
-        }
-        return $uuid;
+            );
+            $record_hash = hash('sha256', CF01_Crypto::canonical_json($record));
+            $chain_hash = hash('sha256', $previous_hash . '|' . $record_hash);
+            try {
+                CF01_DB::insert('audit', array(
+                    'event_uuid' => $uuid,
+                    'actor_pseudonym' => $record['actor_pseudonym'],
+                    'action' => $record['action'],
+                    'object_type' => $record['object_type'],
+                    'object_uuid' => $object_uuid,
+                    'purpose' => $record['purpose'],
+                    'result' => $record['result'],
+                    'metadata_cipher' => CF01_Crypto::encrypt($record['metadata'], 'audit-metadata'),
+                    'record_hash' => $record_hash,
+                    'previous_hash' => $previous_hash,
+                    'chain_hash' => $chain_hash,
+                    'occurred_at' => $record['occurred_at'],
+                ));
+            } catch (Throwable $error) {
+                throw new RuntimeException('Clinical audit persistence failed; action cannot be treated as complete.', 0, $error);
+            }
+            return $uuid;
+        });
     }
 
     private static function actor_pseudonym(int $actor_id): string {
@@ -94,6 +98,7 @@ final class CF01_Audit {
 
 final class CF01_Outbox {
     public static function enqueue(string $event, array $payload, string $aggregate_uuid): string {
+        $event = self::canonical_event_name($event);
         $uuid = CF01_DB::uuid();
         if (!empty($payload['patient_uuid']) && empty($payload['recipient_platform_uuid'])) {
             $patient = CF01_DB::row('SELECT platform_subject_cipher FROM ' . CF01_DB::table('patients') . ' WHERE clinical_uuid = %s LIMIT 1', array((string) $payload['patient_uuid']));
@@ -110,7 +115,7 @@ final class CF01_Outbox {
         $minimized = self::minimize_payload($payload);
         CF01_DB::insert('outbox', array(
             'event_uuid' => $uuid,
-            'event_name' => sanitize_key($event),
+            'event_name' => $event,
             'aggregate_uuid' => $aggregate_uuid,
             'payload_cipher' => CF01_Crypto::encrypt($minimized, 'outbox-payload'),
             'status' => 'pending',
@@ -137,14 +142,16 @@ final class CF01_Outbox {
 
     public static function deliver(array $row): void {
         $payload = CF01_Crypto::decrypt((string) $row['payload_cipher'], 'outbox-payload');
+        $event_name = (string) $row['event_name'];
+        $event_key = strtolower($event_name);
         $request = array(
             'recipient_platform_uuid' => (string) ($payload['recipient_platform_uuid'] ?? ''),
-            'template_key' => self::template((string) $row['event_name']),
-            'action_category' => self::category((string) $row['event_name']),
+            'template_key' => self::template($event_name),
+            'action_category' => self::category($event_name),
             'destination_reference' => (string) $row['event_uuid'],
             'urgency' => !empty($payload['red_flag']) ? 'high' : 'normal',
-            'expires_at' => gmdate('Y-m-d\TH:i:s\Z', time() + self::notification_ttl((string) $row['event_name'])),
-            'mandatory_policy' => str_contains((string) $row['event_name'], 'BreakGlass') ? 'clinical_access_alert' : '',
+            'expires_at' => gmdate('Y-m-d\TH:i:s\Z', time() + self::notification_ttl($event_name)),
+            'mandatory_policy' => str_contains($event_key, 'breakglass') ? 'clinical_access_alert' : '',
             'correlation_id' => (string) $row['event_uuid'],
             'dedupe_key' => hash('sha256', (string) $row['event_uuid']),
         );
@@ -172,8 +179,6 @@ final class CF01_Outbox {
         ), array('event_uuid' => $row['event_uuid']), $expected);
     }
 
-
-
     public static function resolve_destination(int $actor_id, string $reference): string {
         $row = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('outbox') . ' WHERE event_uuid = %s LIMIT 1', array($reference));
         if (!$row) {
@@ -190,13 +195,13 @@ final class CF01_Outbox {
         } else {
             CF01_Authorization::actor($actor_id, 'view_own_clinical_record');
         }
-        $event = (string) ($payload['event_name'] ?? $row['event_name']);
+        $event = strtolower((string) ($payload['event_name'] ?? $row['event_name']));
         $aggregate = rawurlencode((string) $payload['aggregate_uuid']);
-        if (str_contains($event, 'Prescription')) {
+        if (str_contains($event, 'prescription')) {
             $path = '/clinic/prescriptions/' . $aggregate;
-        } elseif (str_contains($event, 'FollowUp') || str_contains($event, 'Outcome')) {
+        } elseif (str_contains($event, 'followup') || str_contains($event, 'outcome')) {
             $path = '/clinic/follow-ups/' . $aggregate;
-        } elseif (str_contains($event, 'Encounter')) {
+        } elseif (str_contains($event, 'encounter')) {
             $path = '/clinic/encounters/' . $aggregate;
         } else {
             $path = '/my-health-record';
@@ -211,23 +216,32 @@ final class CF01_Outbox {
         return $url;
     }
 
+    private static function canonical_event_name(string $event): string {
+        $event = trim($event);
+        if ($event === '' || strlen($event) > 96 || !preg_match('/^[A-Za-z][A-Za-z0-9.:-]*$/', $event)) {
+            throw new InvalidArgumentException('Clinical event name is invalid.');
+        }
+        return $event;
+    }
+
     private static function notification_ttl(string $event): int {
         $ttl = (int) apply_filters('cf01_notification_expiry_seconds', DAY_IN_SECONDS, $event);
         return max(300, min(7 * DAY_IN_SECONDS, $ttl));
     }
 
     private static function template(string $event): string {
-        return str_contains($event, 'BreakGlass') ? 'clinical_access_alert' : 'private_clinical_update';
+        return str_contains(strtolower($event), 'breakglass') ? 'clinical_access_alert' : 'private_clinical_update';
     }
 
     private static function category(string $event): string {
-        if (str_contains($event, 'FollowUp')) {
+        $event = strtolower($event);
+        if (str_contains($event, 'followup')) {
             return 'clinical_followup';
         }
-        if (str_contains($event, 'Prescription')) {
+        if (str_contains($event, 'prescription')) {
             return 'clinical_prescription';
         }
-        if (str_contains($event, 'BreakGlass')) {
+        if (str_contains($event, 'breakglass')) {
             return 'clinical_security';
         }
         return 'clinical_record';
