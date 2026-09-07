@@ -15,7 +15,7 @@ final class CF01_Audit {
     }
 
     public static function access(int $actor_id, string $patient_uuid, string $action, string $object_type, string $object_uuid, string $purpose, string $result): void {
-        $event_uuid = self::write($actor_id, $action, $object_type, $object_uuid, $purpose, $metadata = array('patient_uuid' => $patient_uuid), $result);
+        $event_uuid = self::write($actor_id, $action, $object_type, $object_uuid, $purpose, array('patient_uuid' => $patient_uuid), $result);
         CF01_DB::insert('access', array(
             'event_uuid' => $event_uuid,
             'patient_uuid' => $patient_uuid,
@@ -32,8 +32,6 @@ final class CF01_Audit {
     private static function write(int $actor_id, string $action, string $object_type, string $object_uuid, string $purpose, array $metadata, string $result): string {
         return CF01_DB::transaction(function () use ($actor_id, $action, $object_type, $object_uuid, $purpose, $metadata, $result): string {
             $uuid = CF01_DB::uuid();
-            // Serialize the append point. InnoDB keeps this record/gap lock until the
-            // surrounding clinical transaction commits, preventing concurrent forks.
             $previous = CF01_DB::row('SELECT chain_hash FROM ' . CF01_DB::table('audit') . ' ORDER BY id DESC LIMIT 1 FOR UPDATE');
             $previous_hash = (string) ($previous['chain_hash'] ?? str_repeat('0', 64));
             $record = array(
@@ -98,6 +96,7 @@ final class CF01_Audit {
 
 final class CF01_Outbox {
     public static function enqueue(string $event, array $payload, string $aggregate_uuid): string {
+        $event = self::normalize_plan_event($event, $payload);
         $event = self::canonical_event_name($event);
         $uuid = CF01_DB::uuid();
         if (!empty($payload['patient_uuid']) && empty($payload['recipient_platform_uuid'])) {
@@ -216,6 +215,14 @@ final class CF01_Outbox {
         return $url;
     }
 
+    private static function normalize_plan_event(string $event, array $payload): string {
+        $event = trim($event);
+        if (strcasecmp($event, 'FollowUpStatusChanged') === 0 && sanitize_key((string) ($payload['status'] ?? '')) === 'overdue') {
+            return 'FollowUpOverdue';
+        }
+        return $event;
+    }
+
     private static function canonical_event_name(string $event): string {
         $event = trim($event);
         if ($event === '' || strlen($event) > 96 || !preg_match('/^[A-Za-z][A-Za-z0-9.:-]*$/', $event)) {
@@ -248,7 +255,7 @@ final class CF01_Outbox {
     }
 
     private static function minimize_payload(array $payload): array {
-        $allowed = array('patient_uuid', 'recipient_platform_uuid', 'destination_reference', 'aggregate_uuid', 'event_name', 'followup_uuid', 'prescription_uuid', 'encounter_uuid', 'case_uuid', 'grant_uuid', 'status', 'due_at', 'expires_at', 'red_flag');
+        $allowed = array('patient_uuid', 'recipient_platform_uuid', 'destination_reference', 'aggregate_uuid', 'event_name', 'followup_uuid', 'prescription_uuid', 'encounter_uuid', 'case_uuid', 'grant_uuid', 'retention_uuid', 'status', 'due_at', 'expires_at', 'red_flag');
         return array_intersect_key($payload, array_flip($allowed));
     }
 }
