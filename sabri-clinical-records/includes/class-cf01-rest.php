@@ -326,6 +326,14 @@ final class CF01_REST {
         } catch (Throwable $error) {
             $trace = CF01_DB::uuid();
             do_action('cf01_exception', $error, $trace);
+            if (self::is_conflict($error)) {
+                return new WP_REST_Response(array(
+                    'ok' => false,
+                    'code' => 'clinical_conflict',
+                    'message' => __('The clinical record changed or the requested state transition is no longer current. Reload and retry safely.', 'sabri-clinical-records'),
+                    'trace_id' => $trace,
+                ), 409, self::private_headers());
+            }
             return new WP_REST_Response(array('ok' => false, 'code' => 'clinical_record_unavailable', 'message' => __('The protected clinical operation could not be completed.', 'sabri-clinical-records'), 'trace_id' => $trace), 403, self::private_headers());
         }
     }
@@ -375,6 +383,24 @@ final class CF01_REST {
                 $result[$key] = array_map(static fn(array $row): array => self::safe_row($row, $key), $rows);
             }
         }
+        if (in_array('access_history', $fields, true)) {
+            $rows = CF01_DB::rows(
+                'SELECT event_uuid, action, object_type, purpose, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s ORDER BY occurred_at DESC, event_uuid DESC LIMIT 50',
+                array($patient_uuid)
+            );
+            $result['access_history'] = array_map(static function (array $row): array {
+                return array(
+                    'event_uuid' => (string) $row['event_uuid'],
+                    'actor_category' => str_contains(strtolower((string) $row['action']), 'breakglass') ? 'emergency_clinician' : 'authorized_clinical_user',
+                    'action' => (string) $row['action'],
+                    'object_type' => (string) $row['object_type'],
+                    'purpose' => (string) $row['purpose'],
+                    'result' => (string) $row['result'],
+                    'occurred_at' => (string) $row['occurred_at'],
+                    'break_glass' => str_contains(strtolower((string) $row['action']), 'breakglass'),
+                );
+            }, $rows);
+        }
         return $result;
     }
 
@@ -392,9 +418,9 @@ final class CF01_REST {
         foreach ($sources as $key => [$id_field, $status_field, $time_field]) {
             $sql = 'SELECT ' . $id_field . ', ' . $status_field . ', ' . $time_field . ', row_version FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s';
             $args = array($patient_uuid);
-            if ($before !== '') {
-                $sql .= ' AND ' . $time_field . ' <= %s';
-                $args[] = $before;
+            if ($before !== null) {
+                $sql .= ' AND (' . $time_field . ' < %s OR (' . $time_field . ' = %s AND ' . $id_field . ' < %s))';
+                array_push($args, $before['occurred_at'], $before['occurred_at'], $before['uuid']);
             }
             $sql .= ' ORDER BY ' . $time_field . ' DESC, ' . $id_field . ' DESC LIMIT ' . ($limit + 1);
             foreach (CF01_DB::rows($sql, $args) as $row) {
@@ -409,9 +435,9 @@ final class CF01_REST {
         }
         $access_sql = 'SELECT event_uuid, action, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s';
         $access_args = array($patient_uuid);
-        if ($before !== '') {
-            $access_sql .= ' AND occurred_at <= %s';
-            $access_args[] = $before;
+        if ($before !== null) {
+            $access_sql .= ' AND (occurred_at < %s OR (occurred_at = %s AND event_uuid < %s))';
+            array_push($access_args, $before['occurred_at'], $before['occurred_at'], $before['uuid']);
         }
         $access_sql .= ' ORDER BY occurred_at DESC, event_uuid DESC LIMIT ' . ($limit + 1);
         foreach (CF01_DB::rows($access_sql, $access_args) as $row) {
@@ -438,9 +464,9 @@ final class CF01_REST {
         return $payload . '.' . $signature;
     }
 
-    private static function decode_timeline_cursor(string $cursor, string $patient_uuid): string {
+    private static function decode_timeline_cursor(string $cursor, string $patient_uuid): ?array {
         if ($cursor === '') {
-            return '';
+            return null;
         }
         $parts = explode('.', $cursor, 2);
         if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', $parts[0], CF01_Crypto::key() ?? str_repeat("\0", 32)), $parts[1])) {
@@ -450,10 +476,17 @@ final class CF01_REST {
         $encoded .= str_repeat('=', (4 - strlen($encoded) % 4) % 4);
         $decoded = base64_decode($encoded, true);
         $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || !hash_equals($patient_uuid, (string) ($payload['patient_uuid'] ?? '')) || empty($payload['occurred_at'])) {
+        if (!is_array($payload)
+            || !hash_equals($patient_uuid, (string) ($payload['patient_uuid'] ?? ''))
+            || empty($payload['occurred_at'])
+            || !preg_match('/^[a-f0-9-]{36}$/', (string) ($payload['uuid'] ?? ''))
+        ) {
             throw new InvalidArgumentException('Timeline cursor is invalid for this patient.');
         }
-        return sanitize_text_field((string) $payload['occurred_at']);
+        return array(
+            'occurred_at' => sanitize_text_field((string) $payload['occurred_at']),
+            'uuid' => (string) $payload['uuid'],
+        );
     }
 
     private static function project_encounter_content(array $content, string $role): array {
@@ -472,6 +505,16 @@ final class CF01_REST {
             'consents' => array('consent_uuid','purpose','notice_version','status','granted_at','withdrawn_at','expires_at','row_version','created_at','updated_at'),
         );
         return array_intersect_key($row, array_flip($allow[$entity] ?? array()));
+    }
+
+    private static function is_conflict(Throwable $error): bool {
+        $message = strtolower($error->getMessage());
+        foreach (array('concurrently', 'stale clinical record version', 'invalid care relationship transition', 'invalid encounter transition', 'invalid prescription transition', 'already processing', 'already used', 'already reviewed', 'already changed') as $needle) {
+            if (str_contains($message, $needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function private_headers(): array {
