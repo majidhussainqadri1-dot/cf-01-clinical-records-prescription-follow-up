@@ -37,8 +37,10 @@ $cf01_files = array(
     'class-cf01-retention.php',
     'class-cf01-activation-evidence.php',
     'class-cf01-release-orchestrator.php',
+    'class-cf01-plan-contracts.php',
     'class-cf01-rest.php',
     'class-cf01-lifecycle-rest.php',
+    'class-cf01-plan-rest.php',
     'class-cf01-ui-health.php',
     'class-cf01-migrations.php',
 );
@@ -58,6 +60,7 @@ final class CF01_Plugin {
         add_action('init', array('CF01_UI', 'register'));
         add_action('rest_api_init', array('CF01_REST', 'register_routes'));
         add_action('rest_api_init', array('CF01_Lifecycle_REST', 'register_routes'));
+        add_action('rest_api_init', array('CF01_Plan_REST', 'register_routes'));
         add_action('cf01_process_outbox', array('CF01_Outbox', 'process'));
         add_action('cf01_retention_reconcile', array('CF01_Retention', 'reconcile'));
         add_action('cf01_followup_reconcile', array('CF01_Followups', 'reconcile_due'));
