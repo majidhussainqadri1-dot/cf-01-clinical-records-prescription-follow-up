@@ -133,6 +133,15 @@ final class CF01_DB {
         return $updated === 1;
     }
 
+    /**
+     * Execute a mutating command exactly once for a given actor/command/key/request.
+     *
+     * The durable processing receipt is intentionally written before the transaction so a
+     * process crash cannot permit a blind replay. The clinical mutation, local audit/outbox
+     * writes and the completed response receipt are then committed atomically. If any part
+     * fails, the clinical transaction is rolled back and only a failed command receipt is
+     * retained for reconciliation.
+     */
     public static function idempotent(int $actor_id, string $command, string $key, array $request, callable $operation): array {
         if (!preg_match('/^[A-Za-z0-9._:-]{8,128}$/', $key)) {
             throw new InvalidArgumentException('A valid idempotency key is required.');
@@ -173,19 +182,22 @@ final class CF01_DB {
             }
             throw $error;
         }
+
         try {
-            $response = $operation();
-            if (!is_array($response)) {
-                $response = array('result' => $response);
-            }
-            $ok = self::update_versioned('commands', array(
-                'status' => 'completed',
-                'response_cipher' => CF01_Crypto::encrypt($response, 'command-response'),
-            ), array('receipt_uuid' => $receipt_uuid), 1);
-            if (!$ok) {
-                throw new RuntimeException('Idempotency receipt changed concurrently.');
-            }
-            return $response;
+            return self::transaction(function () use ($operation, $receipt_uuid): array {
+                $response = $operation();
+                if (!is_array($response)) {
+                    $response = array('result' => $response);
+                }
+                $ok = self::update_versioned('commands', array(
+                    'status' => 'completed',
+                    'response_cipher' => CF01_Crypto::encrypt($response, 'command-response'),
+                ), array('receipt_uuid' => $receipt_uuid), 1);
+                if (!$ok) {
+                    throw new RuntimeException('Idempotency receipt changed concurrently.');
+                }
+                return $response;
+            });
         } catch (Throwable $error) {
             try {
                 self::update_versioned('commands', array(

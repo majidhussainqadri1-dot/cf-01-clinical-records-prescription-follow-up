@@ -40,8 +40,9 @@ final class CF01_Retention {
         }
         $holds = CF01_Crypto::decrypt((string) $row['holds_cipher'], 'retention-holds');
         $holds = is_array($holds) ? $holds : array();
+        $hold_uuid = CF01_DB::uuid();
         $holds[] = array(
-            'hold_uuid' => CF01_DB::uuid(),
+            'hold_uuid' => $hold_uuid,
             'type' => sanitize_key((string) $hold['type']),
             'reason' => sanitize_textarea_field((string) $hold['reason']),
             'authority' => sanitize_text_field((string) $hold['authority']),
@@ -56,7 +57,11 @@ final class CF01_Retention {
         if (!$ok) {
             throw new RuntimeException('Retention record changed concurrently.');
         }
-        CF01_Audit::record($actor_id, 'ClinicalRetentionHoldPlaced', 'retention_record', $uuid, 'records_governance', array('hold_type' => $hold['type']));
+        CF01_Audit::record($actor_id, 'ClinicalRetentionHoldApplied', 'retention_record', $uuid, 'records_governance', array('hold_type' => $hold['type']));
+        CF01_Outbox::enqueue('ClinicalRetentionHoldApplied', array(
+            'retention_uuid' => $uuid,
+            'status' => 'held',
+        ), $uuid);
         return self::get($uuid);
     }
 
@@ -96,6 +101,10 @@ final class CF01_Retention {
             throw new RuntimeException('Retention record changed concurrently.');
         }
         CF01_Audit::record($actor_id, 'ClinicalRetentionHoldReleased', 'retention_record', $uuid, 'records_governance', array());
+        CF01_Outbox::enqueue('ClinicalRetentionHoldReleased', array(
+            'retention_uuid' => $uuid,
+            'status' => $active ? 'held' : 'none',
+        ), $uuid);
         return self::get($uuid);
     }
 
