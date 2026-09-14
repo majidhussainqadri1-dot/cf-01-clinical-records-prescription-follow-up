@@ -251,7 +251,13 @@ final class CF01_Future_Clinical_Intelligence {
             throw new RuntimeException('Decision-support provider must return a bounded advisory response requiring clinician review.');
         }
         self::assert_no_forbidden_output($result);
+        $provider_reference = sanitize_text_field((string) ($result['decision_reference'] ?? ''));
         $result = self::sanitize($result);
+        if ($provider_reference !== '') {
+            $result['decision_reference'] = self::issue_decision_reference($patient_uuid, $provider_reference);
+        } else {
+            unset($result['decision_reference']);
+        }
         $result['feature_id'] = 'CF01-FUT-015';
         $result['advisory'] = true;
         $result['clinician_review_required'] = true;
@@ -295,7 +301,7 @@ final class CF01_Future_Clinical_Intelligence {
         if (!is_array($contract) || empty($contract['valid']) || empty($contract['approved']) || empty($contract['minimum_necessary']) || empty($contract['signed_transport']) || empty($contract['idempotent_receiver'])) {
             throw new RuntimeException('Approved institutional webhook contract is unavailable.');
         }
-        $allowed_payload = array_intersect_key($payload, array_flip(array('status', 'category', 'occurred_at', 'correlation_id', 'patient_reference')));
+        $allowed_payload = self::validate_institutional_payload($payload, $contract);
         if (isset($allowed_payload['patient_reference'])) {
             $allowed_payload['patient_reference_hash'] = hash('sha256', (string) $allowed_payload['patient_reference']);
             unset($allowed_payload['patient_reference']);
@@ -342,16 +348,31 @@ final class CF01_Future_Clinical_Intelligence {
 
     public static function transparency(int $actor_id, string $decision_reference): array {
         self::require_feature('CF01-FUT-024', true);
-        CF01_Authorization::actor($actor_id, 'view_clinical_record');
         $decision_reference = sanitize_text_field($decision_reference);
         if ($decision_reference === '') {
             throw new InvalidArgumentException('Decision reference is required.');
         }
-        $explanation = apply_filters('cf01_clinical_transparency_explanation', array('available' => false), $decision_reference, $actor_id);
+        $binding = self::decode_decision_reference($decision_reference);
+        $patient_uuid = (string) ($binding['patient_uuid'] ?? '');
+        $provider_reference = (string) ($binding['provider_reference'] ?? '');
+        if ($patient_uuid === '' || $provider_reference === '') {
+            throw new RuntimeException('Clinical transparency decision reference is invalid.');
+        }
+        self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-024');
+        $explanation = apply_filters('cf01_clinical_transparency_explanation', array('available' => false), $provider_reference, $actor_id);
         if (!is_array($explanation)) {
             $explanation = array('available' => false);
         }
         self::assert_no_bias_fields($explanation);
+        CF01_Audit::access(
+            $actor_id,
+            $patient_uuid,
+            'FutureClinicalTransparencyViewed',
+            'clinical_decision',
+            hash('sha256', $decision_reference),
+            'clinical_decision_support',
+            'success'
+        );
         return array(
             'feature_id' => 'CF01-FUT-024',
             'decision_reference' => $decision_reference,
@@ -429,22 +450,126 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     private static function assert_no_autonomous_care(array $payload): void {
-        foreach (array('autonomous_diagnosis', 'autonomous_prescription', 'automatic_prescription', 'automatic_prescription_change', 'dose_recommendation', 'potency_recommendation') as $key) {
-            if (!empty($payload[$key])) {
-                throw new RuntimeException('Autonomous diagnosis, prescription, dose or treatment mutation is prohibited.');
-            }
-        }
+        self::assert_no_forbidden_keys(
+            $payload,
+            array('autonomous_diagnosis', 'autonomous_prescription', 'automatic_prescription', 'automatic_prescription_change', 'dose_recommendation', 'potency_recommendation'),
+            'Autonomous diagnosis, prescription, dose or treatment mutation is prohibited.'
+        );
     }
 
     private static function assert_no_forbidden_output(array $payload, bool $simulation = false): void {
-        $forbidden = array('dose_recommendation', 'potency_recommendation', 'automatic_prescription', 'autonomous_diagnosis');
-        foreach ($forbidden as $key) {
-            if (!empty($payload[$key])) {
-                throw new RuntimeException($simulation
-                    ? 'Simulation output cannot be promoted into autonomous patient care.'
-                    : 'Decision-support output exceeds the advisory clinical boundary.');
+        self::assert_no_forbidden_keys(
+            $payload,
+            array('dose_recommendation', 'potency_recommendation', 'automatic_prescription', 'autonomous_diagnosis'),
+            $simulation
+                ? 'Simulation output cannot be promoted into autonomous patient care.'
+                : 'Decision-support output exceeds the advisory clinical boundary.'
+        );
+    }
+
+    private static function assert_no_forbidden_keys(array $payload, array $forbidden, string $message): void {
+        $walk = function ($value) use (&$walk, $forbidden, $message): void {
+            if (!is_array($value)) {
+                return;
+            }
+            foreach ($value as $key => $child) {
+                if (!is_int($key) && in_array(strtolower((string) $key), $forbidden, true) && !empty($child)) {
+                    throw new RuntimeException($message);
+                }
+                $walk($child);
+            }
+        };
+        $walk($payload);
+    }
+
+    private static function validate_institutional_payload(array $payload, array $contract): array {
+        $allowed_keys = array('status', 'category', 'occurred_at', 'correlation_id', 'patient_reference');
+        foreach ($payload as $key => $_value) {
+            if (!is_string($key) || !in_array($key, $allowed_keys, true)) {
+                throw new InvalidArgumentException('Unexpected institutional webhook payload field.');
             }
         }
+        $result = array();
+        foreach ($payload as $key => $value) {
+            if (!is_scalar($value) || is_bool($value)) {
+                throw new InvalidArgumentException('Institutional webhook payload values must be bounded scalar values.');
+            }
+            $value = trim((string) $value);
+            if ($value === '') {
+                throw new InvalidArgumentException('Institutional webhook payload values cannot be empty.');
+            }
+            if ($key === 'status' || $key === 'category') {
+                $contract_key = $key === 'status' ? 'allowed_statuses' : 'allowed_categories';
+                $allowed_values = isset($contract[$contract_key]) && is_array($contract[$contract_key])
+                    ? array_values(array_filter(array_map('strval', $contract[$contract_key]), static fn(string $item): bool => $item !== ''))
+                    : array();
+                if (!$allowed_values || !in_array($value, $allowed_values, true)) {
+                    throw new RuntimeException('Institutional webhook semantic value is not approved by the recipient contract.');
+                }
+                $result[$key] = $value;
+                continue;
+            }
+            if ($key === 'occurred_at') {
+                if (strlen($value) > 40) {
+                    throw new InvalidArgumentException('Institutional webhook occurred_at is invalid.');
+                }
+                try {
+                    new DateTimeImmutable($value);
+                } catch (Throwable $error) {
+                    throw new InvalidArgumentException('Institutional webhook occurred_at is invalid.', 0, $error);
+                }
+                $result[$key] = $value;
+                continue;
+            }
+            if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/', $value)) {
+                throw new InvalidArgumentException('Institutional webhook opaque identifier is invalid.');
+            }
+            $result[$key] = $value;
+        }
+        return $result;
+    }
+
+    private static function issue_decision_reference(string $patient_uuid, string $provider_reference): string {
+        $binding = array(
+            'version' => 1,
+            'patient_uuid' => $patient_uuid,
+            'provider_reference' => $provider_reference,
+            'issued_at' => CF01_DB::now(),
+        );
+        $envelope = CF01_Crypto::encrypt($binding, 'future-decision-reference');
+        return self::base64url_encode($envelope);
+    }
+
+    private static function decode_decision_reference(string $reference): array {
+        $envelope = self::base64url_decode($reference);
+        $binding = CF01_Crypto::decrypt($envelope, 'future-decision-reference');
+        if (!is_array($binding)
+            || (int) ($binding['version'] ?? 0) !== 1
+            || empty($binding['patient_uuid'])
+            || empty($binding['provider_reference'])
+            || empty($binding['issued_at'])) {
+            throw new RuntimeException('Clinical transparency decision reference is invalid.');
+        }
+        return $binding;
+    }
+
+    private static function base64url_encode(string $value): string {
+        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+    }
+
+    private static function base64url_decode(string $value): string {
+        if ($value === '' || preg_match('/^[A-Za-z0-9_-]+$/', $value) !== 1) {
+            throw new RuntimeException('Clinical transparency decision reference is invalid.');
+        }
+        $padding = strlen($value) % 4;
+        if ($padding !== 0) {
+            $value .= str_repeat('=', 4 - $padding);
+        }
+        $decoded = base64_decode(strtr($value, '-_', '+/'), true);
+        if (!is_string($decoded) || $decoded === '') {
+            throw new RuntimeException('Clinical transparency decision reference is invalid.');
+        }
+        return $decoded;
     }
 
     private static function assert_no_bias_fields(array $payload): void {
