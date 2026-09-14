@@ -21,13 +21,11 @@ $expect = function (callable $fn, string $message, string $contains = '') use (&
     }
 };
 
-// Authentication must come from WordPress runtime state, not caller-supplied headers.
+// Authentication must come from WordPress runtime state, not caller-supplied identity.
 cf01_reset();
 $GLOBALS['cf01_current_user'] = 0;
 $GLOBALS['cf01_caps'] = array('cf01_view_clinical_record' => true);
-$request = new WP_REST_Request();
-$request->set_header('X-User-ID', '1');
-$expect(fn() => CF01_Authorization::actor(1, 'view_clinical_record'), 'Header-based identity spoofing must fail.', 'current authenticated');
+$expect(fn() => CF01_Authorization::actor(1, 'view_clinical_record'), 'Caller-supplied identity spoofing must fail.', 'current authenticated');
 
 // Owner resolution must not trust mutable patient meta as an authority source.
 cf01_reset();
