@@ -4,6 +4,48 @@ defined('ABSPATH') || exit;
 final class CF01_Consents {
     public const PURPOSES = array('clinical_care', 'teleconsultation', 'images', 'recording', 'education', 'transfer', 'research');
 
+    /**
+     * Persist a durable, privacy-minimal notice-presentation receipt without silently
+     * invalidating an already active grant. The actual consent decision remains a
+     * separate RecordConsent command and canonical clinical_consent row.
+     */
+    public static function present(int $actor_id, string $patient_uuid, string $purpose, string $notice_version, array $evidence = array()): array {
+        $patient = CF01_Patients::get($patient_uuid);
+        if (!in_array($purpose, self::PURPOSES, true)) {
+            throw new InvalidArgumentException('Unsupported consent purpose.');
+        }
+        $notice_version = trim($notice_version);
+        if ($notice_version === '' || strlen($notice_version) > 64) {
+            throw new InvalidArgumentException('A valid consent notice version is required.');
+        }
+        self::authorize_subject($actor_id, $patient_uuid, $patient, $purpose, $evidence);
+        $locale = sanitize_text_field((string) ($evidence['locale'] ?? ''));
+        $channel = sanitize_key((string) ($evidence['channel'] ?? 'web'));
+        $presentation_uuid = CF01_DB::uuid();
+        $audit_uuid = CF01_Audit::record(
+            $actor_id,
+            'ClinicalConsentPresented',
+            'clinical_consent_notice',
+            $presentation_uuid,
+            $purpose,
+            array(
+                'patient_reference' => substr(hash('sha256', $patient_uuid), 0, 16),
+                'notice_version' => $notice_version,
+                'locale' => $locale,
+                'channel' => $channel,
+            )
+        );
+        return array(
+            'presentation_uuid' => $presentation_uuid,
+            'audit_event_uuid' => $audit_uuid,
+            'patient_uuid' => $patient_uuid,
+            'purpose' => $purpose,
+            'notice_version' => $notice_version,
+            'presented_at' => CF01_DB::now(),
+            'decision_recorded' => false,
+        );
+    }
+
     public static function record(int $actor_id, string $patient_uuid, string $purpose, string $status, array $evidence): array {
         $patient = CF01_Patients::get($patient_uuid);
         $authority = self::authorize_subject($actor_id, $patient_uuid, $patient, $purpose, $evidence);
@@ -52,6 +94,34 @@ final class CF01_Consents {
         CF01_Audit::record($actor_id, $event, 'clinical_consent', $consent_uuid, $purpose, array('status' => $status));
         CF01_Outbox::enqueue($event, array('consent_uuid' => $consent_uuid, 'patient_uuid' => $patient_uuid, 'purpose' => $purpose), $consent_uuid);
         return self::get($consent_uuid);
+    }
+
+    /**
+     * Renew/re-consent by creating a new immutable consent decision linked to the
+     * prior record. Historical consent rows are never overwritten.
+     */
+    public static function renew(int $actor_id, string $consent_uuid, array $evidence): array {
+        $prior = self::get($consent_uuid);
+        $patient_uuid = (string) $prior['patient_uuid'];
+        $purpose = (string) $prior['purpose'];
+        if (!in_array((string) $prior['status'], array('granted', 'withdrawn', 'declined'), true)) {
+            throw new RuntimeException('Consent is not in a state that can be renewed.');
+        }
+        if (empty($evidence['notice_version']) || empty($evidence['subject_platform_uuid'])) {
+            throw new InvalidArgumentException('Renewed consent requires the current notice and subject evidence.');
+        }
+        $evidence['renewal_of'] = $consent_uuid;
+        $evidence['prior_notice_version'] = (string) ($prior['notice_version'] ?? '');
+        $renewed = self::record($actor_id, $patient_uuid, $purpose, 'granted', $evidence);
+        CF01_Audit::record(
+            $actor_id,
+            'ClinicalConsentRenewed',
+            'clinical_consent',
+            (string) $renewed['consent_uuid'],
+            $purpose,
+            array('prior_consent_reference' => substr(hash('sha256', $consent_uuid), 0, 16))
+        );
+        return $renewed;
     }
 
     public static function withdraw(int $actor_id, string $consent_uuid, string $reason, int $expected_version): array {

@@ -35,10 +35,20 @@ jobs:
       - name: Run unified governance tests
         run: |
           set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/governance-python-${{ matrix.python }}.log") 2>&1
           python -m unittest discover -s tests -p 'test_*.py' -v
           python tools/validate_repository.py .
           python tools/validate_runtime.py .
           git diff --check
+      - name: Retain Python governance diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cf-01-governance-python-${{ matrix.python }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/governance-python-${{ matrix.python }}.log
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - name: Emit exact-head evidence
         run: |
           echo "event=${GITHUB_EVENT_NAME}"

@@ -127,7 +127,7 @@ final class CF01_Relationships {
         }
         $event = $next === 'ended' ? 'CareRelationshipEnded' : 'CareRelationshipStatusChanged';
         CF01_Audit::record($actor_id, $event, 'care_relationship', $relationship_uuid, (string) $row['purpose'], array('status' => $next));
-        CF01_Outbox::enqueue($event, array('relationship_uuid' => $relationship_uuid, 'status' => $next), $relationship_uuid);
+        CF01_Outbox::enqueue($event, array('relationship_uuid' => $relationship_uuid, 'patient_uuid' => $row['patient_uuid'], 'status' => $next), $relationship_uuid);
         return self::get($relationship_uuid);
     }
 
@@ -149,20 +149,23 @@ final class CF01_Relationships {
         return self::TRANSITIONS;
     }
 
-
-
     private static function require_termination_reconciliation(int $actor_id, array $relationship, string $reason): void {
         $open_encounters = CF01_DB::rows(
             'SELECT encounter_uuid, status FROM ' . CF01_DB::table('encounters') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
             array($relationship['relationship_uuid'], 'draft', 'in_progress', 'ready_to_sign')
         );
         $open_prescriptions = CF01_DB::rows(
-            'SELECT prescription_uuid, status FROM ' . CF01_DB::table('prescriptions') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
+            'SELECT p.prescription_uuid, p.status FROM ' . CF01_DB::table('prescriptions') . ' p INNER JOIN ' . CF01_DB::table('encounters') . ' e ON e.encounter_uuid = p.encounter_uuid WHERE e.relationship_uuid = %s AND p.status IN (%s,%s,%s) LIMIT 101',
             array($relationship['relationship_uuid'], 'draft', 'ready_to_sign', 'signed')
         );
-        if (!$open_encounters && !$open_prescriptions) {
-            return;
+        $open_followups = CF01_DB::rows(
+            'SELECT f.followup_uuid, f.status FROM ' . CF01_DB::table('followups') . ' f INNER JOIN ' . CF01_DB::table('prescriptions') . ' p ON p.prescription_uuid = f.prescription_uuid INNER JOIN ' . CF01_DB::table('encounters') . ' e ON e.encounter_uuid = p.encounter_uuid WHERE e.relationship_uuid = %s AND f.status NOT IN (%s,%s) LIMIT 101',
+            array($relationship['relationship_uuid'], 'closed', 'cancelled')
+        );
+        if (count($open_encounters) > 100 || count($open_prescriptions) > 100 || count($open_followups) > 100) {
+            throw new RuntimeException('Relationship termination reconciliation exceeds the bounded synchronous review; use the approved reconciliation job.');
         }
+
         $request = array(
             'contract_version' => '1.0.0',
             'relationship_uuid' => (string) $relationship['relationship_uuid'],
@@ -171,7 +174,9 @@ final class CF01_Relationships {
             'reason_hash' => hash('sha256', trim($reason)),
             'open_encounters' => array_column($open_encounters, 'encounter_uuid'),
             'open_prescriptions' => array_column($open_prescriptions, 'prescription_uuid'),
+            'open_followups' => array_column($open_followups, 'followup_uuid'),
             'future_access_revoked_on_commit' => true,
+            'transfer_retention_reconciliation_required' => true,
         );
         $result = apply_filters('cf01_relationship_termination_reconciliation', null, $request, $actor_id);
         if (!is_array($result)
@@ -180,8 +185,10 @@ final class CF01_Relationships {
             || empty($result['reconciled'])
             || empty($result['continuity_instructions_recorded'])
             || empty($result['open_items_resolved'])
+            || empty($result['open_followups_resolved'])
+            || empty($result['transfer_retention_reconciled'])
         ) {
-            throw new RuntimeException('Open clinical work must be reconciled before relationship termination.');
+            throw new RuntimeException('Clinical continuity, follow-up, transfer and retention work must be reconciled before relationship termination.');
         }
     }
 

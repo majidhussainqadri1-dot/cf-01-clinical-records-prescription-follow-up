@@ -2,8 +2,8 @@
 defined('ABSPATH') || exit;
 
 /**
- * Missing lifecycle and role-specific REST surface.
- * It delegates every mutation to the existing canonical domain owner classes.
+ * Lifecycle and role-specific REST surface.
+ * Every mutation delegates to the canonical clinical domain owner classes.
  */
 final class CF01_Lifecycle_REST {
     private const NS = 'clinical/v1';
@@ -217,7 +217,6 @@ final class CF01_Lifecycle_REST {
             'followups' => array('followups', 'followup_uuid'),
             'consents' => array('consents', 'consent_uuid'),
             'rights' => array('rights', 'case_uuid'),
-            'retention' => array('retention', 'ledger_uuid'),
             'attachments' => array('attachments', 'attachment_uuid'),
         );
         foreach ($map as $field => [$table, $id_field]) {
@@ -231,6 +230,9 @@ final class CF01_Lifecycle_REST {
                 $args
             );
             $result['collections'][$field] = array_map(static fn(array $row): array => self::safe_row($row, $id_field), $rows);
+        }
+        if (in_array('retention', $fields, true)) {
+            $result['collections']['retention'] = self::retention_rows_for_patient($patient_uuid);
         }
         if (in_array('access_history', $fields, true)) {
             $result['collections']['access_history'] = self::access_page($patient_uuid, (string) $context['role'], '', 25);
@@ -250,6 +252,53 @@ final class CF01_Lifecycle_REST {
             }
         }
         return $result;
+    }
+
+    private static function retention_rows_for_patient(string $patient_uuid): array {
+        $object_uuids = array($patient_uuid);
+        $sources = array(
+            'relationships' => 'relationship_uuid',
+            'consents' => 'consent_uuid',
+            'encounters' => 'encounter_uuid',
+            'observations' => 'observation_uuid',
+            'attachments' => 'attachment_uuid',
+            'assessments' => 'assessment_uuid',
+            'prescriptions' => 'prescription_uuid',
+            'followups' => 'followup_uuid',
+            'outcomes' => 'outcome_uuid',
+            'rights' => 'case_uuid',
+            'breakglass' => 'grant_uuid',
+        );
+        foreach ($sources as $table => $id_field) {
+            $rows = CF01_DB::rows(
+                'SELECT ' . $id_field . ' FROM ' . CF01_DB::table($table) . ' WHERE patient_uuid = %s ORDER BY id DESC LIMIT 501',
+                array($patient_uuid)
+            );
+            if (count($rows) > 500) {
+                throw new RuntimeException('Retention projection exceeds the bounded synchronous view; use the approved paginated governance query.');
+            }
+            foreach ($rows as $row) {
+                if (!empty($row[$id_field])) {
+                    $object_uuids[] = (string) $row[$id_field];
+                }
+            }
+        }
+        $object_uuids = array_values(array_unique($object_uuids));
+        $placeholders = implode(',', array_fill(0, count($object_uuids), '%s'));
+        $rows = CF01_DB::rows(
+            'SELECT * FROM ' . CF01_DB::table('retention') . ' WHERE object_uuid IN (' . $placeholders . ') ORDER BY id DESC LIMIT 101',
+            $object_uuids
+        );
+        if (count($rows) > 100) {
+            throw new RuntimeException('Retention projection exceeds the bounded synchronous view; use the approved paginated governance query.');
+        }
+        return array_map(static function (array $row): array {
+            $allowed = array(
+                'retention_uuid','object_type','object_uuid','policy_key','eligible_at','hold_status','status',
+                'purge_started_at','purged_at','row_version','created_at','updated_at'
+            );
+            return array_intersect_key($row, array_flip($allowed));
+        }, $rows);
     }
 
     private static function access_page(string $patient_uuid, string $role, string $cursor, int $limit): array {
@@ -373,7 +422,9 @@ final class CF01_Lifecycle_REST {
         if (count($parts) !== 2 || !is_string($key) || $key === '' || !hash_equals(hash_hmac('sha256', $parts[0], $key), $parts[1])) {
             throw new InvalidArgumentException('Invalid access-history cursor.');
         }
-        $raw = base64_decode(strtr($parts[0], '-_', '+/'), true);
+        $encoded = strtr($parts[0], '-_', '+/');
+        $encoded .= str_repeat('=', (4 - strlen($encoded) % 4) % 4);
+        $raw = base64_decode($encoded, true);
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
         if (!is_array($decoded)
             || !hash_equals($patient_uuid, (string) ($decoded['p'] ?? ''))
@@ -421,6 +472,14 @@ final class CF01_Lifecycle_REST {
         } catch (Throwable $error) {
             $trace = CF01_DB::uuid();
             do_action('cf01_exception', $error, $trace);
+            if (self::is_conflict($error)) {
+                return new WP_REST_Response(array(
+                    'ok' => false,
+                    'code' => 'clinical_conflict',
+                    'message' => __('The clinical record changed or the requested state transition is no longer current. Reload and retry safely.', 'sabri-clinical-records'),
+                    'trace_id' => $trace,
+                ), 409, self::private_headers());
+            }
             return new WP_REST_Response(array('ok' => false, 'code' => 'clinical_record_unavailable', 'message' => __('The protected clinical operation could not be completed.', 'sabri-clinical-records'), 'trace_id' => $trace), 403, self::private_headers());
         }
     }
@@ -437,6 +496,16 @@ final class CF01_Lifecycle_REST {
             throw new InvalidArgumentException('Expected record version is required.');
         }
         return (int) $value;
+    }
+
+    private static function is_conflict(Throwable $error): bool {
+        $message = strtolower($error->getMessage());
+        foreach (array('concurrently', 'stale clinical record version', 'invalid care relationship transition', 'invalid encounter transition', 'invalid prescription transition', 'already processing', 'already used', 'already reviewed', 'already changed') as $needle) {
+            if (str_contains($message, $needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function private_headers(): array {

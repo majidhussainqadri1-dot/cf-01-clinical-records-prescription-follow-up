@@ -85,7 +85,7 @@ $patterns = array(
     "'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(), payment=(), usb=()'" => 'Restrictive browser permissions policy missing.',
     "Clinical audit persistence failed" => 'Audit failure must block completion.',
     "dead_letter" => 'Outbox dead-letter missing.',
-    "ClinicalRetentionHoldPlaced" => 'Retention hold missing.',
+    "ClinicalRetentionHoldApplied" => 'Canonical retention-hold event missing.',
     "Verified native-owner purge receipt" => 'Purge receipt requirement missing.',
     "cf01_migration_lock" => 'Migration lock missing.',
     "next_cursor" => 'Resumable migration cursor missing.',

@@ -55,7 +55,7 @@ $pass(function () use ($patient, $enc, $order): void { $bad=$order; $bad['autono
 $pass(function () use ($patient): void { cf01_expect_exception(fn() => CF01_Break_Glass::request(2, $patient['clinical_uuid'], '', array('emergency'=>true)), 'reason'); }, 'breakglass reason');
 $pass(function () use ($patient): void { cf01_expect_exception(fn() => CF01_Break_Glass::request(2, $patient['clinical_uuid'], 'reason', array('emergency'=>true,'bulk'=>true)), 'minimum-view'); }, 'breakglass bulk');
 $grant = CF01_Break_Glass::request(2, $patient['clinical_uuid'], 'reason', array('emergency'=>true,'requested_fields'=>array('summary')));
-$pass(function () use ($grant): void { cf01_expect_exception(fn() => CF01_Break_Glass::review(2, $grant['grant_uuid'], array('finding'=>'appropriate'), 1), 'self-review'); }, 'breakglass self review');
+$pass(function () use ($grant): void { cf01_expect_exception(fn() => CF01_Break_Glass::review(2, $grant['grant_uuid'], array('finding'=>'appropriate'), (int) $grant['row_version']), 'self-review'); }, 'breakglass self review');
 
 $right = CF01_Rights::request(1, $patient['clinical_uuid'], 'export', array());
 $pass(function () use ($right): void { cf01_expect_exception(fn() => CF01_Rights::fulfill_export(1, $right['case_uuid'], 'ref', 1), 'approved'); }, 'unapproved export');
@@ -84,12 +84,17 @@ $pass(function (): void {
 }, 'key rotation archive');
 
 $pass(function () use ($patient): void {
-    $policyUuid = CF01_DB::uuid();
-    CF01_DB::insert('retention', array('policy_uuid'=>$policyUuid,'patient_uuid'=>$patient['clinical_uuid'],'record_type'=>'clinical_patient','record_uuid'=>$patient['clinical_uuid'],'policy_key'=>'PK-test','retain_until'=>gmdate('Y-m-d H:i:s', time()-10),'hold'=>1,'status'=>'active','row_version'=>1,'created_at'=>CF01_DB::now(),'updated_at'=>CF01_DB::now()));
+    $retention = CF01_Retention::schedule(
+        1,
+        'clinical_patient',
+        $patient['clinical_uuid'],
+        'pk-test',
+        gmdate('Y-m-d H:i:s', time() - 10),
+        array(array('type'=>'legal','reason'=>'test hold','authority'=>'test'))
+    );
     CF01_Retention::reconcile();
-    $rows = array_values($GLOBALS['wpdb']->tables[CF01_DB::table('retention')] ?? array());
-    $held = array_values(array_filter($rows, static fn(array $row): bool => (string) ($row['policy_uuid'] ?? '') === $policyUuid));
-    cf01_assert(count($held) === 1 && (int) $held[0]['hold'] === 1 && (string) $held[0]['status'] === 'active', 'Legal hold allowed its policy row to become purge eligible.');
+    $held = CF01_Retention::get((string) $retention['retention_uuid']);
+    cf01_assert((string) $held['hold_status'] === 'held' && (string) $held['status'] === 'scheduled', 'Legal hold allowed its canonical retention record to become purge eligible.');
 }, 'legal hold purge denial');
 
 $pass(function () use ($patient): void {
