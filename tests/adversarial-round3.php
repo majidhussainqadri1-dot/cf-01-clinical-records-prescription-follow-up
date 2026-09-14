@@ -68,7 +68,8 @@ CF01_DB::insert('consents', array(
 ));
 $consent = CF01_Authorization::consent($patientUuid, 'clinical_care');
 $check(($consent['status'] ?? '') === 'granted', 'Current canonical consent must authorize its purpose.');
-CF01_DB::update('consents', array('status' => 'withdrawn', 'withdrawn_at' => CF01_DB::now()), array('consent_uuid' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'));
+$updated = CF01_DB::update_versioned('consents', array('status' => 'withdrawn', 'withdrawn_at' => CF01_DB::now()), array('consent_uuid' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), 1);
+$check($updated === true, 'Versioned consent withdrawal fixture must update exactly one canonical row.');
 $expect(fn() => CF01_Authorization::consent($patientUuid, 'clinical_care'), 'Withdrawn consent must fail closed.', 'active purpose-specific consent');
 
 // Minimum-necessary projection must never broaden requested fields beyond the role policy.
