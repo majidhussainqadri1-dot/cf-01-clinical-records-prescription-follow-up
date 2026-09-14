@@ -68,6 +68,20 @@ class FutureClinicalIntelligence24Tests(unittest.TestCase):
         ]:
             self.assertIn(token, source)
 
+    def test_shadow_state_is_limited_to_privacy_minimal_sidecar_not_phi_reads(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertEqual(source.count("self::require_feature('CF01-FUT-001', true);"), 1)
+        for forbidden in [
+            "self::require_feature('CF01-FUT-002', true);",
+            "self::require_feature('CF01-FUT-005', true);",
+            "self::require_feature('CF01-FUT-012', true);",
+            "self::require_feature('CF01-FUT-021', true);",
+            "self::require_feature('CF01-FUT-024', true);",
+            "self::require_feature($feature_id, true);",
+        ]:
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+
     def test_clinical_facts_reuse_encrypted_canonical_observations(self):
         source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
         self.assertIn("CF01_Encounters::add_observation", source)
@@ -121,6 +135,22 @@ class FutureClinicalIntelligence24Tests(unittest.TestCase):
         self.assertIn("contains_real_patient_data", source)
         self.assertIn("not_for_patient_care", source)
         self.assertNotIn("wp_remote_post(", source)
+
+    def test_research_registry_uses_purpose_scoped_pseudonymous_references(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertIn("CF01_Crypto::blind_index($patient_uuid, 'research-registry-subject')", source)
+        self.assertIn("CF01_Crypto::blind_index((string) $actor_id, 'research-registry-actor')", source)
+        self.assertIn("$registry_reference, $actor_reference", source)
+        self.assertNotIn("array('available' => false, 'registrations' => array()), $patient_uuid, $actor_id", source)
+
+    def test_simulation_provider_receives_only_closed_synthetic_reference_contract(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertIn("$allowed_keys = array('synthetic_case', 'contains_real_patient_data', 'scenario_reference', 'training_mode')", source)
+        self.assertIn("only a closed synthetic scenario contract", source)
+        self.assertIn("Synthetic scenario reference is invalid", source)
+        self.assertIn("$safe_scenario = array(", source)
+        self.assertIn("apply_filters('cf01_clinical_simulation_execute', null, $safe_scenario, $actor_id)", source)
+        self.assertNotIn("apply_filters('cf01_clinical_simulation_execute', null, $scenario, $actor_id)", source)
 
     def test_institutional_webhook_payload_is_contract_bounded_not_free_text(self):
         source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
