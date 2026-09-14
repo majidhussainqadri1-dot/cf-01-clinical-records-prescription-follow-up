@@ -51,7 +51,7 @@ final class CF01_Future_REST {
             (string) $request['id'],
             (string) ($data['state'] ?? ''),
             (array) ($data['evidence'] ?? array())
-        ));
+        ), array('feature_id' => (string) $request['id']));
     }
 
     public static function sidecar_assurance(WP_REST_Request $request): WP_REST_Response {
@@ -84,7 +84,7 @@ final class CF01_Future_REST {
             (string) ($data['encounter_uuid'] ?? ''),
             (array) ($data['value'] ?? array()),
             (array) ($data['provenance'] ?? array())
-        ));
+        ), array('feature_id' => (string) $request['id'], 'patient_uuid' => (string) $request['patient']));
     }
 
     public static function decision_support(WP_REST_Request $request): WP_REST_Response {
@@ -101,7 +101,7 @@ final class CF01_Future_REST {
             (string) $request['followup'],
             (array) ($data['response'] ?? array()),
             self::version($request, $data)
-        ));
+        ), array('followup_uuid' => (string) $request['followup']));
     }
 
     public static function research_consents(WP_REST_Request $request): WP_REST_Response {
@@ -113,7 +113,7 @@ final class CF01_Future_REST {
             get_current_user_id(),
             (string) $request['event'],
             (array) ($data['payload'] ?? array())
-        ));
+        ), array('event_name' => (string) $request['event']));
     }
 
     public static function simulation(WP_REST_Request $request): WP_REST_Response {
@@ -127,12 +127,16 @@ final class CF01_Future_REST {
         return self::query(fn(): array => CF01_Future_Clinical_Intelligence::transparency(get_current_user_id(), (string) $request['decision']));
     }
 
-    private static function mutate(WP_REST_Request $request, string $command, callable $callback): WP_REST_Response {
-        return self::respond(function () use ($request, $command, $callback): array {
+    private static function mutate(WP_REST_Request $request, string $command, callable $callback, array $route_context = array()): WP_REST_Response {
+        return self::respond(function () use ($request, $command, $callback, $route_context): array {
             CF01_Authorization::require_enabled();
             $data = self::json($request);
             $key = trim((string) $request->get_header('Idempotency-Key'));
-            return CF01_DB::idempotent(get_current_user_id(), $command, $key, $data, fn(): array => $callback($data));
+            $fingerprint = array(
+                'route_context' => $route_context,
+                'body' => $data,
+            );
+            return CF01_DB::idempotent(get_current_user_id(), $command, $key, $fingerprint, fn(): array => $callback($data));
         });
     }
 
