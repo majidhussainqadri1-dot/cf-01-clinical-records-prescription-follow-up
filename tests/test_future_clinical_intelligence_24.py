@@ -92,6 +92,15 @@ class FutureClinicalIntelligence24Tests(unittest.TestCase):
         self.assertIn("CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care', 'clinical_decision_support')", source)
         self.assertIn("CF01_Authorization::consent($patient_uuid, 'clinical_care')", source)
 
+    def test_future_clinical_safety_guards_walk_nested_payloads(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertIn("private static function assert_no_forbidden_keys", source)
+        self.assertIn("$walk = function ($value) use (&$walk, $forbidden, $message)", source)
+        self.assertIn("$walk($child);", source)
+        self.assertIn("self::assert_no_forbidden_keys(", source)
+        self.assertIn("automatic_prescription_change", source)
+        self.assertIn("potency_recommendation", source)
+
     def test_patient_reported_outcome_cannot_change_treatment_before_review(self):
         source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
         self.assertIn("CF01_Followups::submit_outcome", source)
@@ -113,11 +122,29 @@ class FutureClinicalIntelligence24Tests(unittest.TestCase):
         self.assertIn("not_for_patient_care", source)
         self.assertNotIn("wp_remote_post(", source)
 
+    def test_institutional_webhook_payload_is_contract_bounded_not_free_text(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertIn("validate_institutional_payload($payload, $contract)", source)
+        self.assertIn("'allowed_statuses'", source)
+        self.assertIn("'allowed_categories'", source)
+        self.assertIn("Unexpected institutional webhook payload field", source)
+        self.assertIn("Institutional webhook semantic value is not approved by the recipient contract", source)
+        self.assertIn("/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/", source)
+
     def test_transparency_prohibits_financial_or_donor_ranking_signals(self):
         source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
         for token in ["donor", "donation", "payment", "paid_rank", "financial_priority", "no_covert_health_profiling"]:
             self.assertIn(token, source)
         self.assertIn("human_clinical_authority_preserved", source)
+
+    def test_transparency_reference_is_server_bound_authorized_and_audited(self):
+        source = self.read(INCLUDES / "class-cf01-future-clinical-intelligence.php")
+        self.assertIn("CF01_Crypto::encrypt($binding, 'future-decision-reference')", source)
+        self.assertIn("CF01_Crypto::decrypt($envelope, 'future-decision-reference')", source)
+        self.assertIn("self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-024')", source)
+        self.assertIn("'FutureClinicalTransparencyViewed'", source)
+        self.assertIn("hash('sha256', $decision_reference)", source)
+        self.assertIn("$provider_reference", source)
 
     def test_rest_surface_is_private_idempotent_and_concurrency_aware(self):
         source = self.read(INCLUDES / "class-cf01-future-rest.php")
