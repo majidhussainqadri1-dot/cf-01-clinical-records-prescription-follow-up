@@ -94,7 +94,7 @@ $check(($assertion['export_allowed'] ?? true) === false && ($assertion['persiste
 $used = CF01_Break_Glass::get((string) $grant['grant_uuid']);
 $check((int) $used['row_version'] > $initialVersion, 'Break-glass use must advance optimistic row version.');
 $GLOBALS['cf01_current_user'] = 3;
-$expect(fn() => CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', $initialVersion), 'Stale break-glass revocation must fail.', 'version conflict');
+$expect(fn() => CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', $initialVersion), 'Stale break-glass revocation must fail.', 'stale clinical record version');
 $revoked = CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', (int) $used['row_version']);
 $check(($revoked['status'] ?? '') === 'revoked', 'Current-version break-glass revocation must succeed.');
 
