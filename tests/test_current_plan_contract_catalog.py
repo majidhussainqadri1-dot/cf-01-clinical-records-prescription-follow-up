@@ -116,7 +116,7 @@ class CurrentPlanContractCatalogueTests(unittest.TestCase):
             "ClinicalConsentWithdrawn",
             "GuardianAuthorityChanged",
             "EncounterSigned",
-            "EncounterAddended",
+            "EncounterAddendumAdded",
             "PrescriptionSigned",
             "PrescriptionSuperseded",
             "FollowUpPlanned",
