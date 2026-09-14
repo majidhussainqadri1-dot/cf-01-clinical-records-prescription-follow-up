@@ -136,6 +136,10 @@ final class CF01_DB {
     /**
      * Execute a mutating command exactly once for a given actor/command/key/request.
      *
+     * REST command receipts are additionally scoped to the concrete request path so the
+     * same actor/command/key/body cannot replay a completed mutation for a different
+     * clinical object UUID. Non-HTTP/background callers retain the original command scope.
+     *
      * The durable processing receipt is intentionally written before the transaction so a
      * process crash cannot permit a blind replay. The clinical mutation, local audit/outbox
      * writes and the completed response receipt are then committed atomically. If any part
@@ -146,8 +150,12 @@ final class CF01_DB {
         if (!preg_match('/^[A-Za-z0-9._:-]{8,128}$/', $key)) {
             throw new InvalidArgumentException('A valid idempotency key is required.');
         }
-        $key_hash = CF01_Crypto::blind_index($actor_id . '|' . $command . '|' . $key, 'command-idempotency');
-        $request_hash = hash('sha256', CF01_Crypto::canonical_json($request));
+        $resource_scope = self::idempotency_resource_scope();
+        $key_hash = CF01_Crypto::blind_index($actor_id . '|' . $command . '|' . $resource_scope . '|' . $key, 'command-idempotency');
+        $request_hash = hash('sha256', CF01_Crypto::canonical_json(array(
+            'resource_scope' => $resource_scope,
+            'request' => $request,
+        )));
         $existing = self::row('SELECT * FROM ' . self::table('commands') . ' WHERE key_hash = %s LIMIT 1', array($key_hash));
         if ($existing) {
             if (!hash_equals((string) $existing['request_hash'], $request_hash)) {
@@ -209,6 +217,29 @@ final class CF01_DB {
             }
             throw $error;
         }
+    }
+
+    private static function idempotency_resource_scope(): string {
+        $uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+        if ($uri === '') {
+            return '';
+        }
+
+        $path = parse_url($uri, PHP_URL_PATH);
+        $scope = is_string($path) ? $path : '';
+
+        // Query-style WordPress REST requests use /?rest_route=/clinical/v1/...
+        if ($scope === '' || $scope === '/') {
+            $query = parse_url($uri, PHP_URL_QUERY);
+            if (is_string($query) && $query !== '') {
+                parse_str($query, $params);
+                if (isset($params['rest_route']) && is_string($params['rest_route'])) {
+                    $scope = $params['rest_route'];
+                }
+            }
+        }
+
+        return substr($scope, 0, 512);
     }
 
     public static function activation_state(): string {
