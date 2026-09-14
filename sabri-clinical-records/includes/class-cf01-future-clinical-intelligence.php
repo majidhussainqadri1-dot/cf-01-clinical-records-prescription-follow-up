@@ -4,10 +4,10 @@ defined('ABSPATH') || exit;
 /**
  * Future Clinical Intelligence 24.
  *
- * These capabilities are source-complete but governance-gated.  They reuse CF-01's
+ * These capabilities are source-complete but governance-gated. They reuse CF-01's
  * canonical encrypted records instead of creating a second clinical source of truth.
  * Every feature defaults to disabled and must be accepted separately after the core
- * runtime has been activated.  No future capability may autonomously diagnose,
+ * runtime has been activated. No future capability may autonomously diagnose,
  * prescribe, change a prescription, bypass consent/relationship controls, or train on
  * raw production clinical data.
  */
@@ -151,7 +151,7 @@ final class CF01_Future_Clinical_Intelligence {
 
     public static function facts(int $actor_id, string $feature_id, string $patient_uuid, int $limit = 50): array {
         $feature_id = self::feature_id($feature_id);
-        self::require_feature($feature_id, true);
+        self::require_feature($feature_id);
         if (!isset(self::OBSERVATION_TYPES[$feature_id])) {
             throw new RuntimeException('This Future Clinical Intelligence capability does not expose clinical facts.');
         }
@@ -170,7 +170,7 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     public static function longitudinal_timeline(int $actor_id, string $patient_uuid, int $limit = 100): array {
-        self::require_feature('CF01-FUT-002', true);
+        self::require_feature('CF01-FUT-002');
         self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-002');
         $limit = max(1, min(200, $limit));
         $items = array();
@@ -197,7 +197,7 @@ final class CF01_Future_Clinical_Intelligence {
         if (!in_array($feature_id, array('CF01-FUT-007', 'CF01-FUT-008'), true)) {
             throw new InvalidArgumentException('Attachment index is limited to imaging/diagnostic or clinical-document features.');
         }
-        self::require_feature($feature_id, true);
+        self::require_feature($feature_id);
         self::authorize_patient_read($actor_id, $patient_uuid, $feature_id);
         $limit = max(1, min(100, $limit));
         $rows = CF01_DB::rows(
@@ -209,7 +209,7 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     public static function encounter_index(int $actor_id, string $patient_uuid, int $limit = 50): array {
-        self::require_feature('CF01-FUT-012', true);
+        self::require_feature('CF01-FUT-012');
         self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-012');
         $limit = max(1, min(100, $limit));
         $rows = CF01_DB::rows(
@@ -221,7 +221,7 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     public static function medication_therapy(int $actor_id, string $patient_uuid, int $limit = 50): array {
-        self::require_feature('CF01-FUT-005', true);
+        self::require_feature('CF01-FUT-005');
         self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-005');
         $limit = max(1, min(100, $limit));
         $prescriptions = CF01_DB::rows(
@@ -277,13 +277,15 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     public static function research_consents(int $actor_id, string $patient_uuid): array {
-        self::require_feature('CF01-FUT-021', true);
+        self::require_feature('CF01-FUT-021');
         self::authorize_patient_read($actor_id, $patient_uuid, 'CF01-FUT-021');
         $rows = CF01_DB::rows(
             'SELECT consent_uuid, notice_version, status, granted_at, withdrawn_at, expires_at, row_version, created_at, updated_at FROM ' . CF01_DB::table('consents') . ' WHERE patient_uuid = %s AND purpose = %s ORDER BY id DESC LIMIT 100',
             array($patient_uuid, 'research')
         );
-        $external = apply_filters('cf01_research_registry_status', array('available' => false, 'registrations' => array()), $patient_uuid, $actor_id);
+        $registry_reference = CF01_Crypto::blind_index($patient_uuid, 'research-registry-subject');
+        $actor_reference = CF01_Crypto::blind_index((string) $actor_id, 'research-registry-actor');
+        $external = apply_filters('cf01_research_registry_status', array('available' => false, 'registrations' => array()), $registry_reference, $actor_reference);
         $external = is_array($external) ? self::sanitize($external) : array('available' => false, 'registrations' => array());
         CF01_Audit::access($actor_id, $patient_uuid, 'ResearchConsentRegistryViewed', 'future_clinical_feature', 'CF01-FUT-021', 'research', 'success');
         return array('feature_id' => 'CF01-FUT-021', 'patient_uuid' => $patient_uuid, 'consents' => $rows, 'registry' => $external);
@@ -327,13 +329,34 @@ final class CF01_Future_Clinical_Intelligence {
     public static function simulation(int $actor_id, array $scenario): array {
         self::require_feature('CF01-FUT-023');
         CF01_Authorization::actor($actor_id, 'clinical_simulation_lab');
-        if (empty($scenario['synthetic_case']) || !empty($scenario['contains_real_patient_data']) || isset($scenario['patient_uuid']) || isset($scenario['platform_uuid'])) {
+        $allowed_keys = array('synthetic_case', 'contains_real_patient_data', 'scenario_reference', 'training_mode');
+        foreach ($scenario as $key => $_value) {
+            if (!is_string($key) || !in_array($key, $allowed_keys, true)) {
+                throw new RuntimeException('Agent Training & Simulation Lab accepts only a closed synthetic scenario contract.');
+            }
+        }
+        if (($scenario['synthetic_case'] ?? null) !== true
+            || ($scenario['contains_real_patient_data'] ?? null) !== false
+            || empty($scenario['scenario_reference'])
+            || isset($scenario['patient_uuid'])
+            || isset($scenario['platform_uuid'])) {
             throw new RuntimeException('Agent Training & Simulation Lab accepts synthetic/de-identified governed scenarios only.');
         }
-        $scenario = self::sanitize($scenario);
-        $scenario['synthetic_case'] = true;
-        $scenario['contains_real_patient_data'] = false;
-        $result = apply_filters('cf01_clinical_simulation_execute', null, $scenario, $actor_id);
+        $scenario_reference = trim((string) $scenario['scenario_reference']);
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/', $scenario_reference)) {
+            throw new InvalidArgumentException('Synthetic scenario reference is invalid.');
+        }
+        $training_mode = sanitize_key((string) ($scenario['training_mode'] ?? 'training'));
+        if (!in_array($training_mode, array('training', 'testing', 'evaluation'), true)) {
+            throw new InvalidArgumentException('Synthetic simulation mode is invalid.');
+        }
+        $safe_scenario = array(
+            'synthetic_case' => true,
+            'contains_real_patient_data' => false,
+            'scenario_reference' => $scenario_reference,
+            'training_mode' => $training_mode,
+        );
+        $result = apply_filters('cf01_clinical_simulation_execute', null, $safe_scenario, $actor_id);
         if (!is_array($result) || empty($result['simulation_only']) || ($result['source_data'] ?? '') !== 'synthetic') {
             throw new RuntimeException('Simulation provider must attest synthetic-only execution.');
         }
@@ -347,7 +370,7 @@ final class CF01_Future_Clinical_Intelligence {
     }
 
     public static function transparency(int $actor_id, string $decision_reference): array {
-        self::require_feature('CF01-FUT-024', true);
+        self::require_feature('CF01-FUT-024');
         $decision_reference = sanitize_text_field($decision_reference);
         if ($decision_reference === '') {
             throw new InvalidArgumentException('Decision reference is required.');
