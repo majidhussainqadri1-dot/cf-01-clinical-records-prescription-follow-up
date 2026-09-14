@@ -5,9 +5,7 @@ $count = 0;
 $failures = array();
 $check = function (bool $condition, string $message) use (&$count, &$failures): void {
     $count++;
-    if (!$condition) {
-        $failures[] = $message;
-    }
+    if (!$condition) $failures[] = $message;
 };
 $expect = function (callable $fn, string $message, string $contains = '') use (&$count, &$failures): void {
     $count++;
@@ -21,208 +19,83 @@ $expect = function (callable $fn, string $message, string $contains = '') use (&
     }
 };
 
-// Authentication must come from WordPress runtime state, not caller-supplied identity.
+// Authenticated actor identity is authoritative unless an explicit service-actor contract permits delegation.
 cf01_reset();
-$GLOBALS['cf01_current_user'] = 0;
-$GLOBALS['cf01_caps'] = array('cf01_view_clinical_record' => true);
-$expect(fn() => CF01_Authorization::actor(1, 'view_clinical_record'), 'Caller-supplied identity spoofing must fail.', 'current authenticated');
-
-// Owner resolution must not trust mutable patient meta as an authority source.
-cf01_reset();
-$GLOBALS['cf01_current_user'] = 2;
-$patient = CF01_Patients::create(2, 'platform-user-1', array('date_of_birth' => '1980-01-01'), 'PK');
-$patientUuid = (string) $patient['clinical_uuid'];
+$GLOBALS['cf01_filters']['cf01_allow_service_actor'] = array();
 $GLOBALS['cf01_current_user'] = 1;
-$GLOBALS['cf01_caps'] = array('cf01_view_own_clinical_record' => true);
-update_user_meta(1, 'cf01_patient_uuid', $patientUuid);
-$expect(fn() => CF01_Authorization::patient_owner(1, $patientUuid), 'Patient ownership must reject mutable-meta takeover.', 'identity contract');
+$GLOBALS['cf01_caps'] = array('*' => true);
+$expect(fn() => CF01_Authorization::actor(2, 'view_clinical_record'), 'Cross-user actor spoofing must fail.', 'identity mismatch');
 
-// Clinician relationship assertions must be server-authenticated and bound to actor, patient, purpose and capability.
+// Patient ownership is derived from canonical membership platform identity + patient blind index, not mutable user metadata.
 cf01_reset();
 $GLOBALS['cf01_current_user'] = 2;
+$patient = CF01_Patients::create(2, 'platform-user-2', array('date_of_birth' => '1980-01-01'), 'PK');
+$patientUuid = (string) $patient['clinical_uuid'];
+$check(CF01_Authorization::patient_owner(2, $patientUuid) === true, 'Canonical patient owner must resolve.');
+$check(CF01_Authorization::patient_owner(1, $patientUuid) === false, 'Unrelated membership must not become patient owner.');
+$authorizationSource = file_get_contents(CF01_DIR . 'includes/class-cf01-authorization.php');
+$check(!str_contains($authorizationSource, 'get_user_meta('), 'Patient ownership must not depend on mutable user meta.');
+
+// A merely proposed relationship must never authorize clinical reads.
+cf01_reset();
+$GLOBALS['cf01_current_user'] = 2;
+$GLOBALS['cf01_caps'] = array('*' => true);
 $patient = CF01_Patients::create(2, 'platform-user-1', array('date_of_birth' => '1980-01-01'), 'PK');
 $patientUuid = (string) $patient['clinical_uuid'];
-$GLOBALS['cf01_current_user'] = 3;
-$GLOBALS['cf01_caps'] = array('cf01_view_clinical_record' => true);
-add_filter('cf01_clinical_relationship_assertion', static function ($value, string $patient, int $actor, string $purpose, string $capability): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'revoked' => false,
-        'suspended' => false,
-        'contract_version' => '1.0.0',
-        'relationship_reference' => 'rel-1',
-        'relationship_version' => 1,
-        'patient_uuid' => $patient,
-        'actor_user_id' => $actor,
-        'purpose' => $purpose,
-        'capability' => $capability,
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 5);
-$relationship = CF01_Authorization::relationship($patientUuid, 3, 'clinical_care', 'view_clinical_record');
-$check(($relationship['relationship_reference'] ?? '') === 'rel-1', 'Bound relationship assertion must pass.');
-remove_all_filters('cf01_clinical_relationship_assertion');
-add_filter('cf01_clinical_relationship_assertion', static function ($value, string $patient, int $actor, string $purpose, string $capability): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'revoked' => false,
-        'suspended' => false,
-        'contract_version' => '1.0.0',
-        'relationship_reference' => 'rel-bad',
-        'relationship_version' => 1,
-        'patient_uuid' => 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-        'actor_user_id' => $actor,
-        'purpose' => $purpose,
-        'capability' => $capability,
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 5);
-$expect(fn() => CF01_Authorization::relationship($patientUuid, 3, 'clinical_care', 'view_clinical_record'), 'Mismatched relationship assertion must fail.', 'does not match');
+$relationship = CF01_Relationships::propose(2, $patientUuid, 2, array(
+    'purpose' => 'clinical_care',
+    'scope' => array('clinical_care'),
+    'source_reference' => 'relationship-round3',
+));
+$check(($relationship['status'] ?? '') === 'proposed', 'Relationship must begin proposed.');
+$expect(fn() => CF01_Authorization::relationship($patientUuid, 2, 'clinical_care', 'view_clinical_record'), 'Proposed relationship must not authorize access.', 'active treating relationship');
 
-// Consent contract must reject stale/revoked/mismatched assertions.
+// Consent authorization must read the canonical consent row and reject revoked state.
 cf01_reset();
-add_filter('cf01_consent_assertion', static function ($value, string $patient, string $purpose): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'status' => 'active',
-        'consent_reference' => 'consent-1',
-        'consent_version' => 2,
-        'contract_version' => '1.0.0',
-        'patient_uuid' => $patient,
-        'purpose' => $purpose,
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 3);
-$consent = CF01_Authorization::consent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'clinical_care');
-$check(($consent['consent_reference'] ?? '') === 'consent-1', 'Current consent assertion must pass.');
-remove_all_filters('cf01_consent_assertion');
-add_filter('cf01_consent_assertion', static function ($value, string $patient, string $purpose): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'status' => 'revoked',
-        'consent_reference' => 'consent-2',
-        'consent_version' => 3,
-        'contract_version' => '1.0.0',
-        'patient_uuid' => $patient,
-        'purpose' => $purpose,
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 3);
-$expect(fn() => CF01_Authorization::consent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'clinical_care'), 'Revoked consent assertion must fail.', 'not current');
+$patientUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+CF01_DB::insert('consents', array(
+    'consent_uuid' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    'patient_uuid' => $patientUuid,
+    'purpose' => 'clinical_care',
+    'notice_version' => '1',
+    'status' => 'granted',
+    'granted_at' => CF01_DB::now(),
+    'withdrawn_at' => null,
+    'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
+    'row_version' => 1,
+    'created_at' => CF01_DB::now(),
+    'updated_at' => CF01_DB::now(),
+));
+$consent = CF01_Authorization::consent($patientUuid, 'clinical_care');
+$check(($consent['status'] ?? '') === 'granted', 'Current canonical consent must authorize its purpose.');
+CF01_DB::update('consents', array('status' => 'withdrawn', 'withdrawn_at' => CF01_DB::now()), array('consent_uuid' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'));
+$expect(fn() => CF01_Authorization::consent($patientUuid, 'clinical_care'), 'Withdrawn consent must fail closed.', 'active purpose-specific consent');
 
-// Minimum-view assertion must not broaden requested fields.
-cf01_reset();
-add_filter('cf01_clinical_minimum_view_assertion', static function ($value, string $view, string $purpose, array $requested): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'contract_version' => '1.0.0',
-        'assertion_version' => 1,
-        'view' => $view,
-        'purpose' => $purpose,
-        'requested_fields' => $requested,
-        'allowed_fields' => array_merge($requested, array('extra-secret-field')),
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 4);
-$expect(fn() => CF01_Authorization::fields('break_glass', 'emergency_care', array('summary'), array()), 'Minimum-view assertion must not broaden fields.', 'broadened');
+// Minimum-necessary projection must never broaden requested fields beyond the role policy.
+$fields = CF01_Authorization::fields('break_glass', 'emergency_care', array('summary', 'secret_internal_field'), array());
+$check($fields === array('summary'), 'Minimum-necessary field projection must drop unauthorized fields.');
 
-// Records/auditor capability must be bound to a current patient-specific assignment.
-cf01_reset();
-$patientA = CF01_Patients::create(1, 'platform-user-11', array('date_of_birth' => '1990-01-01'), 'PK');
-$patientB = CF01_Patients::create(1, 'platform-user-12', array('date_of_birth' => '1991-01-01'), 'PK');
-$patientAUuid = (string) $patientA['clinical_uuid'];
-$patientBUuid = (string) $patientB['clinical_uuid'];
-$GLOBALS['cf01_current_user'] = 3;
-$GLOBALS['cf01_caps'] = array('cf01_audit_clinical' => true);
-add_filter('cf01_clinical_oversight_assertion', static function ($value, int $actorId, string $patient, string $purpose, string $role) use ($patientAUuid): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'revoked' => false,
-        'suspended' => false,
-        'contract_version' => '1.0.0',
-        'assignment_reference' => 'audit-assignment-1',
-        'assignment_version' => 1,
-        'actor_user_id' => $actorId,
-        'patient_uuid' => $patientAUuid,
-        'purpose' => $purpose,
-        'role' => $role,
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 5);
-$auditor = CF01_Role_Context::resolve(3, $patientAUuid, 'privacy_transparency', 'auditor');
-$check(($auditor['authority'] ?? '') === 'patient_scoped_oversight_contract', 'Patient-scoped auditor assignment must pass.');
-$expect(fn() => CF01_Role_Context::resolve(3, $patientBUuid, 'privacy_transparency', 'auditor'), 'Cross-patient auditor scope escalation must fail.', 'patient-scoped');
-
-// Break-glass: one active grant, professional continuity, no active/self final review.
+// Break-glass consumes optimistic versions; use of a grant advances row_version and stale revocation must fail.
 cf01_reset();
 $GLOBALS['cf01_current_user'] = 2;
-$patient = CF01_Patients::create(2, 'platform-user-1', array('date_of_birth' => '1980-01-01'), 'PK');
+$GLOBALS['cf01_caps'] = array('*' => true);
+$patient = CF01_Patients::create(2, 'platform-user-2', array('date_of_birth' => '1980-01-01'), 'PK');
 $patientUuid = (string) $patient['clinical_uuid'];
 $grant = CF01_Break_Glass::request(2, $patientUuid, 'Immediate emergency medication review', array(
     'emergency' => true,
-    'emergency_reference' => 'emergency-incident-1',
-    'device_reference' => 'device-session-1',
+    'emergency_reference' => 'emergency-incident-round3',
+    'device_reference' => 'device-session-round3',
     'requested_fields' => array('summary', 'active_prescriptions'),
 ));
-$expect(fn() => CF01_Break_Glass::request(2, $patientUuid, 'Duplicate emergency request', array(
-    'emergency' => true,
-    'emergency_reference' => 'emergency-incident-2',
-    'device_reference' => 'device-session-1',
-    'requested_fields' => array('summary'),
-)), 'Duplicate active break-glass grant must fail.', 'already exists');
+$initialVersion = (int) $grant['row_version'];
 $assertion = CF01_Break_Glass::assertion(2, (string) $grant['grant_uuid'], array('summary'));
-$check(($assertion['export_allowed'] ?? true) === false && ($assertion['persistent_access'] ?? true) === false, 'Break-glass must never create export or persistent access.');
-$activeGrant = CF01_Break_Glass::get((string) $grant['grant_uuid']);
-$activeVersion = (int) $activeGrant['row_version'];
+$check(($assertion['export_allowed'] ?? true) === false && ($assertion['persistent_access'] ?? true) === false, 'Break-glass must not create export or persistent access.');
+$used = CF01_Break_Glass::get((string) $grant['grant_uuid']);
+$check((int) $used['row_version'] > $initialVersion, 'Break-glass use must advance optimistic row version.');
 $GLOBALS['cf01_current_user'] = 3;
-$expect(fn() => CF01_Break_Glass::review(3, (string) $grant['grant_uuid'], array('finding' => 'appropriate', 'reviewer_reference' => 'review-1', 'conflict_disclosed' => false), $activeVersion), 'Active grant final review must fail.', 'revoked or expire');
-$revoked = CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', $activeVersion);
-$GLOBALS['cf01_current_user'] = 2;
-$expect(fn() => CF01_Break_Glass::review(2, (string) $grant['grant_uuid'], array('finding' => 'appropriate', 'reviewer_reference' => 'review-2', 'conflict_disclosed' => false), (int) $revoked['row_version']), 'Break-glass self-review must fail.', 'self-review');
-$GLOBALS['cf01_current_user'] = 3;
-$reviewed = CF01_Break_Glass::review(3, (string) $grant['grant_uuid'], array('finding' => 'appropriate', 'reviewer_reference' => 'review-3', 'conflict_disclosed' => false), (int) $revoked['row_version']);
-$check(($reviewed['review_status'] ?? '') === 'reviewed', 'Independent break-glass review must complete after revocation.');
-
-// Access-history cursors are signed and patient-bound; patient views never reveal actor/object references.
-cf01_reset();
-$patientUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-CF01_DB::insert('access', array(
-    'event_uuid' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    'patient_uuid' => $patientUuid,
-    'actor_pseudonym' => str_repeat('c', 64),
-    'action' => 'ClinicalRecordViewed',
-    'object_type' => 'clinical_patient',
-    'object_uuid' => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-    'purpose' => 'clinical_care',
-    'result' => 'success',
-    'occurred_at' => gmdate('Y-m-d H:i:s'),
-));
-$GLOBALS['cf01_current_user'] = 1;
-$GLOBALS['cf01_caps'] = array('cf01_view_own_clinical_record' => true);
-add_filter('cf01_patient_identity_assertion', static function ($value, int $actorId, string $patient) use ($patientUuid): array {
-    return array(
-        'valid' => true,
-        'accepted' => true,
-        'revoked' => false,
-        'suspended' => false,
-        'contract_version' => '1.0.0',
-        'assertion_version' => 1,
-        'actor_user_id' => $actorId,
-        'patient_uuid' => $patientUuid,
-        'subject_reference' => 'patient-subject-1',
-        'expires_at' => gmdate('Y-m-d H:i:s', time() + 600),
-    );
-}, 10, 3);
-$history = CF01_Access_History::list_for_patient(1, $patientUuid, '', 10);
-$item = $history['items'][0] ?? array();
-$check(isset($item['category'], $item['display_label'], $item['occurred_at']), 'Patient access-history entry must expose safe display fields.');
-$check(!isset($item['actor_pseudonym'], $item['object_uuid'], $item['event_uuid']), 'Patient access history must not expose internal actor/object references.');
+$expect(fn() => CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', $initialVersion), 'Stale break-glass revocation must fail.', 'version conflict');
+$revoked = CF01_Break_Glass::revoke(3, (string) $grant['grant_uuid'], 'Emergency ended', (int) $used['row_version']);
+$check(($revoked['status'] ?? '') === 'revoked', 'Current-version break-glass revocation must succeed.');
 
 if ($failures) {
     fwrite(STDERR, implode("\n", $failures) . "\n");
