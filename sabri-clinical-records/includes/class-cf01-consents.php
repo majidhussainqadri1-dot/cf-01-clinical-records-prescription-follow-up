@@ -5,8 +5,6 @@ final class CF01_Consents {
     public const PURPOSES = array('clinical_care', 'teleconsultation', 'images', 'recording', 'education', 'transfer', 'research');
 
     public static function record(int $actor_id, string $patient_uuid, string $purpose, string $status, array $evidence): array {
-        $patient = CF01_Patients::get($patient_uuid);
-        $authority = self::authorize_subject($actor_id, $patient_uuid, $patient, $purpose, $evidence);
         if (!in_array($purpose, self::PURPOSES, true)) {
             throw new InvalidArgumentException('Unsupported consent purpose.');
         }
@@ -19,18 +17,24 @@ final class CF01_Consents {
         if (empty($evidence['notice_version']) || empty($evidence['subject_platform_uuid'])) {
             throw new InvalidArgumentException('Consent notice and subject evidence are required.');
         }
+
+        $patient = CF01_Patients::get($patient_uuid);
+        $authority = self::authorize_subject($actor_id, $patient_uuid, $patient, $purpose, $evidence);
         self::validate_subject_identity($actor_id, $patient_uuid, $purpose, $patient, (string) $evidence['subject_platform_uuid'], $authority);
+
         $demographics = CF01_Patients::demographics($patient);
-        $is_minor = self::is_legal_minor($patient_uuid, $demographics);
+        $jurisdiction = trim((string) ($patient['jurisdiction'] ?? ''));
+        $is_minor = self::is_legal_minor($patient_uuid, $demographics, $jurisdiction);
         if ($is_minor) {
-            $guardian = CF01_Patients::guardian_context($patient);
-            if (($guardian['status'] ?? '') !== 'verified') {
-                throw new RuntimeException('Verified guardian authority is required for a legal minor.');
+            if (($authority['role'] ?? '') === 'patient') {
+                throw new RuntimeException('A legal minor cannot create a new clinical consent without a current verified guardian or an authorized clinician recording that guardian consent.');
             }
+            self::require_current_minor_guardian($actor_id, $patient_uuid, $purpose, $patient, $evidence, $authority);
             if (empty($evidence['minor_assent']) && empty($evidence['assent_not_applicable_reason'])) {
                 throw new InvalidArgumentException('Minor assent or a documented non-applicability reason is required.');
             }
         }
+
         $consent_uuid = CF01_DB::uuid();
         CF01_DB::insert('consents', array(
             'consent_uuid' => $consent_uuid,
@@ -112,14 +116,6 @@ final class CF01_Consents {
         } catch (Throwable $guardian_error) {
             CF01_Authorization::clinician($actor_id, 'record_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
             CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care', 'record_consent');
-            $guardian_actor_id = (int) ($evidence['guardian']['actor_user_id'] ?? 0);
-            $reference = (string) ($evidence['guardian']['reference'] ?? '');
-            if (self::is_legal_minor($patient_uuid, CF01_Patients::demographics($patient))) {
-                $assertion = $guardian_actor_id > 0 ? CF01_Contracts::guardian_authority($guardian_actor_id, $patient_uuid, $purpose, $reference) : array('valid' => false);
-                if (empty($assertion['valid'])) {
-                    throw new RuntimeException('Current guardian authority evidence is required for clinician-recorded minor consent.');
-                }
-            }
             return array('role' => 'doctor');
         }
     }
@@ -144,10 +140,51 @@ final class CF01_Consents {
         }
     }
 
-    private static function is_legal_minor(string $patient_uuid, array $demographics): bool {
+    private static function require_current_minor_guardian(int $actor_id, string $patient_uuid, string $purpose, array $patient, array $evidence, array $authority): void {
+        $guardian = CF01_Patients::guardian_context($patient);
+        if (($guardian['status'] ?? '') !== 'verified') {
+            throw new RuntimeException('Verified guardian authority is required for a legal minor.');
+        }
+        $stored_reference = trim((string) ($guardian['reference'] ?? ''));
+        $stored_subject = trim((string) ($guardian['platform_uuid'] ?? ''));
+        if ($stored_reference === '' || $stored_subject === '') {
+            throw new RuntimeException('Verified guardian authority evidence is incomplete.');
+        }
+        if (empty($guardian['expires_at']) || !CF01_Authorization::not_expired((string) $guardian['expires_at'])) {
+            throw new RuntimeException('Verified guardian authority has expired.');
+        }
+        $scope = array_values(array_unique(array_map('sanitize_key', (array) ($guardian['scope'] ?? array()))));
+        if (!$scope || !in_array(sanitize_key($purpose), $scope, true)) {
+            throw new RuntimeException('Verified guardian scope does not authorize this consent purpose.');
+        }
+
+        $presented_reference = trim((string) ($evidence['guardian']['reference'] ?? $stored_reference));
+        if ($presented_reference === '' || !hash_equals($stored_reference, $presented_reference)) {
+            throw new RuntimeException('Guardian evidence does not match current verified authority.');
+        }
+        $guardian_actor_id = ($authority['role'] ?? '') === 'guardian'
+            ? $actor_id
+            : (int) ($evidence['guardian']['actor_user_id'] ?? 0);
+        if ($guardian_actor_id <= 0) {
+            throw new RuntimeException('Current guardian actor evidence is required for minor clinical consent.');
+        }
+        $assertion = CF01_Contracts::guardian_authority($guardian_actor_id, $patient_uuid, $purpose, $presented_reference);
+        if (empty($assertion['valid'])
+            || !hash_equals($stored_subject, (string) ($assertion['actor_platform_uuid'] ?? ''))
+            || !hash_equals($stored_reference, (string) ($assertion['guardian_reference'] ?? ''))
+        ) {
+            throw new RuntimeException('Current guardian authority evidence is required for minor clinical consent.');
+        }
+    }
+
+    private static function is_legal_minor(string $patient_uuid, array $demographics, string $jurisdiction): bool {
         $date_of_birth = trim((string) ($demographics['date_of_birth'] ?? ''));
         if ($date_of_birth === '') {
             throw new RuntimeException('Clinical age evidence is unavailable.');
+        }
+        $jurisdiction = trim($jurisdiction);
+        if ($jurisdiction === '') {
+            throw new RuntimeException('Clinical jurisdiction evidence is unavailable.');
         }
         try {
             $birth = new DateTimeImmutable($date_of_birth, new DateTimeZone('UTC'));
@@ -155,9 +192,16 @@ final class CF01_Consents {
         } catch (Throwable $error) {
             throw new RuntimeException('Clinical age evidence is invalid.');
         }
-        $majority_age = (int) apply_filters('cf01_legal_majority_age', 18, $patient_uuid, $demographics);
-        $majority_age = max(12, min(25, $majority_age));
-        return $birth->modify('+' . $majority_age . ' years') > $today;
+        if ($birth > $today) {
+            throw new RuntimeException('Clinical age evidence is invalid.');
+        }
+
+        $sex = sanitize_key((string) ($demographics['sex'] ?? ''));
+        $platform_minimum = $sex === 'male' ? 15 : ($sex === 'female' ? 12 : 18);
+        $legal_majority_age = (int) apply_filters('cf01_legal_majority_age', 18, $patient_uuid, $demographics, $jurisdiction);
+        $legal_majority_age = max(12, min(25, $legal_majority_age));
+        $consent_age = max($platform_minimum, $legal_majority_age);
+        return $birth->modify('+' . $consent_age . ' years') > $today;
     }
 
     private static function normalize_expiry($value): ?string {
