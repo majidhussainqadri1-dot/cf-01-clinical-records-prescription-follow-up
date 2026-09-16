@@ -134,7 +134,7 @@ add_filter('cf01_guardian_authority_assertion', static function ($value, int $ac
         'revoked' => false,
         'suspended' => false,
         'contract_version' => '1.0.0',
-        'authority_version' => 3,
+        'authority_version' => 1,
         'actor_user_id' => $actorId,
         'actor_platform_uuid' => 'platform-user-' . $actorId,
         'patient_uuid' => $patientUuid,
@@ -144,7 +144,7 @@ add_filter('cf01_guardian_authority_assertion', static function ($value, int $ac
     );
 }, 10, 5);
 $guardianContext = CF01_Role_Context::resolve(1, $patientUuid, 'clinical_care', 'guardian');
-$check(($guardianContext['role'] ?? '') === 'guardian' && (int) ($guardianContext['authority_version'] ?? 0) === 3, 'Current guardian assertion must resolve the guardian role.');
+$check(($guardianContext['role'] ?? '') === 'guardian' && (int) ($guardianContext['authority_version'] ?? 0) === 1, 'Current guardian assertion must resolve the guardian role.');
 $GLOBALS['cf01_current_user'] = 2;
 $expect(fn() => CF01_Role_Context::resolve(2, $patientUuid, 'clinical_care', 'guardian'), 'Guardian impersonation must fail.', 'minimum-necessary');
 
