@@ -73,7 +73,7 @@ final class CF01_Role_Context {
             throw new RuntimeException('Verified guardian scope does not authorize this clinical purpose.');
         }
 
-        $assertion = apply_filters('cf01_guardian_authority_assertion', null, $actor_id, $patient_uuid, $purpose, $guardian);
+        $assertion = CF01_Contracts::guardian_authority($actor_id, $patient_uuid, $purpose, (string) $guardian['reference']);
         self::validate_guardian_assertion($assertion, $actor_id, $actor_subject, $patient_uuid, $purpose, $guardian);
         CF01_Authorization::actor($actor_id, 'view_own_clinical_record', array('purpose' => $purpose, 'patient_uuid' => $patient_uuid));
         return array(
@@ -138,7 +138,7 @@ final class CF01_Role_Context {
             || empty($assertion['accepted'])
             || !empty($assertion['revoked'])
             || !empty($assertion['suspended'])
-            || empty($assertion['contract_version'])
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($assertion['contract_version'] ?? ''))
             || empty($assertion['assignment_reference'])
             || (int) ($assertion['assignment_version'] ?? 0) < 1
             || (int) ($assertion['actor_user_id'] ?? 0) !== $actor_id
@@ -161,13 +161,17 @@ final class CF01_Role_Context {
 
     private static function validate_guardian_assertion($assertion, int $actor_id, string $actor_subject, string $patient_uuid, string $purpose, array $guardian): void {
         $scopes = is_array($assertion) ? array_values(array_unique(array_map('sanitize_key', (array) ($assertion['scopes'] ?? array())))) : array();
+        $stored_authority_version = (int) ($guardian['authority_version'] ?? 0);
+        $stored_contract_version = (string) ($guardian['contract_version'] ?? '');
         if (!is_array($assertion)
             || empty($assertion['valid'])
             || empty($assertion['accepted'])
             || !empty($assertion['revoked'])
             || !empty($assertion['suspended'])
-            || empty($assertion['contract_version'])
-            || (int) ($assertion['authority_version'] ?? 0) < 1
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($assertion['contract_version'] ?? ''))
+            || ($stored_contract_version !== '' && !hash_equals($stored_contract_version, (string) $assertion['contract_version']))
+            || $stored_authority_version < 1
+            || (int) ($assertion['authority_version'] ?? 0) !== $stored_authority_version
             || (int) ($assertion['actor_user_id'] ?? 0) !== $actor_id
             || !hash_equals($actor_subject, (string) ($assertion['actor_platform_uuid'] ?? ''))
             || !hash_equals($patient_uuid, (string) ($assertion['patient_uuid'] ?? ''))
@@ -186,7 +190,7 @@ final class CF01_Role_Context {
             || empty($assertion['accepted'])
             || !empty($assertion['revoked'])
             || !empty($assertion['suspended'])
-            || empty($assertion['contract_version'])
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($assertion['contract_version'] ?? ''))
             || empty($assertion['assignment_reference'])
             || (int) ($assertion['assignment_version'] ?? 0) < 1
             || (int) ($assertion['actor_user_id'] ?? 0) !== $actor_id
