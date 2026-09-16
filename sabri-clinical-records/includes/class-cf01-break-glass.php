@@ -28,17 +28,6 @@ final class CF01_Break_Glass {
             $device_reference = 'server-device-' . substr(hash('sha256', $actor_id . '|' . $patient_uuid . '|' . $emergency_reference), 0, 32);
         }
 
-        $existing = CF01_DB::row(
-            'SELECT * FROM ' . CF01_DB::table('breakglass') . ' WHERE patient_uuid = %s AND actor_user_id = %d AND status = %s ORDER BY id DESC LIMIT 1',
-            array($patient_uuid, $actor_id, 'granted')
-        );
-        if ($existing) {
-            if (CF01_Authorization::not_expired((string) ($existing['expires_at'] ?? ''))) {
-                throw new RuntimeException('An active break-glass grant already exists for this clinician and patient.');
-            }
-            self::expire($existing);
-        }
-
         $requested_fields = CF01_Authorization::fields(
             'break_glass',
             'emergency_care',
@@ -48,17 +37,37 @@ final class CF01_Break_Glass {
         if (!$requested_fields) {
             throw new InvalidArgumentException('At least one authorized emergency minimum-view field is required.');
         }
-        $recent = CF01_DB::row(
-            'SELECT COUNT(*) AS total FROM ' . CF01_DB::table('breakglass') . ' WHERE actor_user_id = %d AND created_at >= %s',
-            array($actor_id, gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS))
-        );
         $uuid = CF01_DB::uuid();
         $expires = gmdate('Y-m-d H:i:s', time() + self::MAX_TTL);
         $professional_uuid = sanitize_text_field((string) ($actor['professional']['professional_uuid'] ?? ''));
         if ($professional_uuid === '') {
             throw new RuntimeException('A current professional identity is required for break-glass.');
         }
-        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $reason, $context, $emergency_reference, $device_reference, $requested_fields, $recent, $uuid, $expires, $professional_uuid): void {
+        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $reason, $context, $emergency_reference, $device_reference, $requested_fields, $uuid, $expires, $professional_uuid): void {
+            $existing = CF01_DB::row(
+                'SELECT * FROM ' . CF01_DB::table('breakglass') . ' WHERE patient_uuid = %s AND actor_user_id = %d AND status = %s ORDER BY id DESC LIMIT 1 FOR UPDATE',
+                array($patient_uuid, $actor_id, 'granted')
+            );
+            if ($existing) {
+                if (CF01_Authorization::not_expired((string) ($existing['expires_at'] ?? ''))) {
+                    throw new RuntimeException('An active break-glass grant already exists for this clinician and patient.');
+                }
+                $expired = CF01_DB::update_versioned(
+                    'breakglass',
+                    array('status' => 'expired', 'review_status' => 'pending'),
+                    array('grant_uuid' => $existing['grant_uuid']),
+                    (int) $existing['row_version']
+                );
+                if (!$expired) {
+                    throw new RuntimeException('Expired break-glass grant changed concurrently.');
+                }
+                CF01_Audit::system('BreakGlassExpired', 'break_glass', (string) $existing['grant_uuid'], 'emergency_care', array());
+                CF01_Outbox::enqueue('BreakGlassExpired', array('grant_uuid' => $existing['grant_uuid'], 'patient_uuid' => $existing['patient_uuid']), (string) $existing['grant_uuid']);
+            }
+            $recent = CF01_DB::row(
+                'SELECT COUNT(*) AS total FROM ' . CF01_DB::table('breakglass') . ' WHERE actor_user_id = %d AND created_at >= %s',
+                array($actor_id, gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS))
+            );
             if ((int) ($recent['total'] ?? 0) >= 2) {
                 CF01_Outbox::enqueue('BreakGlassRepeatedUseAlert', array('patient_uuid' => $patient_uuid, 'actor_reference' => hash('sha256', (string) $actor_id)), $patient_uuid);
             }
@@ -186,24 +195,27 @@ final class CF01_Break_Glass {
         if (empty($review['reviewer_reference']) || !array_key_exists('conflict_disclosed', $review)) {
             throw new InvalidArgumentException('Reviewer reference and conflict disclosure are required.');
         }
-        if (in_array($finding, array('misuse', 'policy_deviation'), true)) {
-            $enforcement = apply_filters('cf01_break_glass_misuse_enforcement', null, array(
-                'contract_version' => '1.0.0',
-                'grant_uuid' => $grant_uuid,
-                'patient_uuid' => (string) $row['patient_uuid'],
-                'actor_user_id' => (int) $row['actor_user_id'],
-                'finding' => $finding,
-                'suspension_evaluation_required' => true,
-            ));
-            if (!is_array($enforcement) || ($enforcement['contract_version'] ?? '') !== '1.0.0' || empty($enforcement['accepted']) || empty($enforcement['alerted']) || empty($enforcement['suspension_evaluated'])) {
-                throw new RuntimeException('Break-glass misuse requires accepted security alert and suspension evaluation evidence.');
-            }
-        }
         CF01_DB::transaction(function () use ($actor_id, $grant_uuid, $review, $expected_version, $finding): void {
             $current = self::get_for_update($grant_uuid);
             CF01_Authorization::expected_version($current, $expected_version);
+            if ((int) $current['actor_user_id'] === $actor_id) {
+                throw new RuntimeException('Break-glass user cannot self-review the access.');
+            }
             if (($current['status'] ?? '') === 'granted' || ($current['review_status'] ?? '') === 'reviewed') {
                 throw new RuntimeException('Break-glass access is not in a reviewable state.');
+            }
+            if (in_array($finding, array('misuse', 'policy_deviation'), true)) {
+                $enforcement = apply_filters('cf01_break_glass_misuse_enforcement', null, array(
+                    'contract_version' => '1.0.0',
+                    'grant_uuid' => $grant_uuid,
+                    'patient_uuid' => (string) $current['patient_uuid'],
+                    'actor_user_id' => (int) $current['actor_user_id'],
+                    'finding' => $finding,
+                    'suspension_evaluation_required' => true,
+                ));
+                if (!is_array($enforcement) || ($enforcement['contract_version'] ?? '') !== '1.0.0' || empty($enforcement['accepted']) || empty($enforcement['alerted']) || empty($enforcement['suspension_evaluated'])) {
+                    throw new RuntimeException('Break-glass misuse requires accepted security alert and suspension evaluation evidence.');
+                }
             }
             $ok = CF01_DB::update_versioned('breakglass', array(
                 'review_status' => 'reviewed',
