@@ -37,6 +37,7 @@ $cf01_files = array(
     'class-cf01-retention.php',
     'class-cf01-activation-evidence.php',
     'class-cf01-release-orchestrator.php',
+    'class-cf01-future24-guard.php',
     'class-cf01-future24.php',
     'class-cf01-rest.php',
     'class-cf01-lifecycle-rest.php',
@@ -55,6 +56,7 @@ final class CF01_Plugin {
     public static function boot(): void {
         CF01_Activation_Evidence::register();
         CF01_Release_Orchestrator::register();
+        CF01_Future24_Guard::register();
         add_action('plugins_loaded', array(__CLASS__, 'plugins_loaded'));
         add_action('init', array('CF01_UI', 'register'));
         add_action('rest_api_init', array('CF01_REST', 'register_routes'));

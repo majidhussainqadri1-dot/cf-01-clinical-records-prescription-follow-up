@@ -22,3 +22,25 @@ Correction batch after Round 1 audit:
 - Updated the CSS fallback to Sabri Green `#087A4E`.
 
 Status after correction: source-level Round 1 defects corrected. This does not claim staging, deployment, database migration or live acceptance.
+
+## Round 2 — authorization, IDOR and privileged-operation review
+
+Audit completed before correction.
+
+Defects found:
+1. Future24 route callbacks had feature/provider guards, but the shared permission callback only established login/core state and did not create a route-specific authorization perimeter before callbacks.
+2. The generic future fact-write route could resolve a patient/guardian context and therefore was not sufficiently restricted for clinician-authored diagnosis, medication, lab, genomics and other clinical facts.
+3. Institutional webhook dispatch and simulation endpoints lacked an independent privileged-operation gate and recent step-up requirement.
+4. Transparency lookup had no mandatory patient-scoped authorization assertion before a provider adapter could answer.
+5. Patient-reported-outcome projection did not independently resolve the follow-up back to its patient before provider invocation.
+
+Correction batch after Round 2 audit:
+- Added `CF01_Future24_Guard` on `rest_request_before_callbacks`, covering every Future24 route before provider code can run.
+- Restricted generic clinical fact writes to a current doctor context plus recent step-up authentication.
+- Added explicit capabilities, recent-auth and accepted institutional authorization for institutional integration dispatch.
+- Restricted simulation to clinical audit/management authority plus recent-auth.
+- Made transparency fail closed unless a patient-scoped authorization contract accepts the decision.
+- Resolved Future24 patient-reported-outcome access through the canonical follow-up patient before callback execution.
+- Added permanent security-regression tests.
+
+Status after correction: Round 2 source authorization defects corrected; no live/staging claim.
