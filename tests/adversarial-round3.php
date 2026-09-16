@@ -133,7 +133,7 @@ add_filter('cf01_guardian_authority_assertion', static function ($value, int $ac
         'accepted' => true,
         'revoked' => false,
         'suspended' => false,
-        'contract_version' => '1.1.2',
+        'contract_version' => '1.0.0',
         'authority_version' => 3,
         'actor_user_id' => $actorId,
         'actor_platform_uuid' => 'platform-user-' . $actorId,
