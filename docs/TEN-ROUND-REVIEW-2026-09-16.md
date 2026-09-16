@@ -24,17 +24,22 @@ Status: corrected at source level; no staging/live claim.
 
 ## Round 4 — clinical-safety, data-minimization and adapter-output review
 Audit completed before correction.
+Defects found: provider responses lacked independent minimum-necessary/authorization assertions; autonomous clinical and donor/payment-bias checks were top-level only; no common nested raw-secret/provider-payload rejection; simulation output lacked independent recursive real-subject enforcement.
+Correction batch: added `CF01_Future24_Response_Guard`, mandatory provider governance assertions, recursive clinical-autonomy/financial-bias/secret rejection, synthetic simulation-output enforcement and regression tests.
+Status: corrected at source level; no staging/live claim.
+
+## Round 5 — exact-head CI, test-inventory and regression-gate review
+Audit completed before correction. The entire failing exact-head workflow was inspected across PHP, Python, 40-round and policy/package jobs before any fix was applied.
+
 Defects found:
-1. A future provider adapter result was trusted after route authorization without an independent minimum-necessary/authorization assertion in the response contract.
-2. Autonomous clinical-action rejection checked only selected top-level decision-support fields, so nested `dose`/`potency`/automatic-action fields could evade the check.
-3. Donor/payment priority rejection in transparency was likewise top-level only.
-4. No common last-line rejection existed for raw secrets/provider payloads, and simulation output did not have an independent recursive real-subject check.
+1. `tests/fresh-review.php` still froze the pre-Future24 plugin PHP inventory at 24 files although two governed Future24 PHP files had been added.
+2. `tools/validate_runtime.py` still froze the combined permanent PHP inventory at 35 rather than 37.
+3. `tests/three-plan-corrections.php` still asserted the superseded green fallback `#0b6b3a`, contradicting the current Sabri Green `#087A4E` requirement.
+4. Because these regression gates were stale, all exact-head workflow families failed or stopped early even though the newly added Future24 Python regression tests themselves passed.
 
-Correction batch after Round 4 audit:
-- Added `CF01_Future24_Response_Guard` as the final provider-response filter.
-- Required explicit provider assertions for authorization, minimum-necessary disclosure, CF-01 canonical ownership and contract version.
-- Added recursive rejection for autonomous diagnosis/prescription/dose/potency/treatment mutation signals.
-- Added recursive donor/payment/rank-bias rejection and global secret/raw-payload rejection.
-- Added independent synthetic/de-identified simulation-output enforcement and regression tests.
+Correction batch after Round 5 audit:
+- Updated the plugin PHP inventory gate to 26 and the combined permanent PHP inventory gate to 37.
+- Updated the three-plan visual regression gate to require current Sabri Green `#087A4E` case-insensitively.
+- Preserved all substantive clinical/security/runtime gates; no failing test was removed or bypassed.
 
-Status after correction: Round 4 source clinical-safety/data-minimization defects corrected; no live/staging claim.
+Status after correction: source/test-gate defects corrected; exact-head CI re-verification is required before Round 5 can be considered QA-green. No staging/live claim.
