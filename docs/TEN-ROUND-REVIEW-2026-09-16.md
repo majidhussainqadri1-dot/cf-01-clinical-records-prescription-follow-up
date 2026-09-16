@@ -6,58 +6,35 @@ Process law: each numbered round is audited to completion first; only after that
 
 ## Round 1 — governing-plan parity, scope and source inventory
 Audit completed before correction.
-
-Defects found:
-1. The repository baseline predates the 2026-09-09 CF-01 Future Clinical Intelligence 24 amendment; none of the stable `CF01-FUT-001` through `CF01-FUT-024` implementation foundations existed.
-2. The governing `/clinical/v1/future/*` contract family was absent.
-3. There was no permanent automated parity gate proving all 24 IDs, the fail-closed activation law, mutation guards and autonomous-clinical-action prohibitions remain present.
-4. The local primary-color fallback still used the older green value instead of the current Sabri Green fallback `#087A4E`.
-
-Correction batch after Round 1 audit:
-- Added `CF01_Future24` as a disabled-by-default, governance-gated adapter layer over the existing canonical clinical system; no second patient chart or duplicate source of truth was introduced.
-- Added the documented Future24 REST contract family with authentication, private/no-store inheritance, governance gates, expected-version/idempotency guards on writes, safe provider failure, simulation isolation and decision-support anti-autonomy invariants.
-- Registered the Future24 layer from the canonical plugin bootstrap.
-- Added `tests/test_future24_plan_parity.py` to freeze the 24 stable IDs and critical invariants.
-- Updated the CSS fallback to Sabri Green `#087A4E`.
-
-Status after correction: source-level Round 1 defects corrected. This does not claim staging, deployment, database migration or live acceptance.
+Defects found: Future24 was absent from the August repository baseline; its REST family and automated parity gate were absent; the local primary fallback still used the earlier green value.
+Correction batch: added the disabled-by-default 24-ID Future24 adapter/REST foundation, bootstrap registration, parity tests, and Sabri Green `#087A4E` fallback. No second clinical source of truth was introduced.
+Status: corrected at source level; no staging/live claim.
 
 ## Round 2 — authorization, IDOR and privileged-operation review
 Audit completed before correction.
-
-Defects found:
-1. Future24 route callbacks had feature/provider guards, but the shared permission callback only established login/core state and did not create a route-specific authorization perimeter before callbacks.
-2. The generic future fact-write route could resolve a patient/guardian context and therefore was not sufficiently restricted for clinician-authored diagnosis, medication, lab, genomics and other clinical facts.
-3. Institutional webhook dispatch and simulation endpoints lacked an independent privileged-operation gate and recent step-up requirement.
-4. Transparency lookup had no mandatory patient-scoped authorization assertion before a provider adapter could answer.
-5. Patient-reported-outcome projection did not independently resolve the follow-up back to its patient before provider invocation.
-
-Correction batch after Round 2 audit:
-- Added `CF01_Future24_Guard` on `rest_request_before_callbacks`, covering every Future24 route before provider code can run.
-- Restricted generic clinical fact writes to a current doctor context plus recent step-up authentication.
-- Added explicit capabilities, recent-auth and accepted institutional authorization for institutional integration dispatch.
-- Restricted simulation to clinical audit/management authority plus recent-auth.
-- Made transparency fail closed unless a patient-scoped authorization contract accepts the decision.
-- Resolved Future24 patient-reported-outcome access through the canonical follow-up patient before callback execution.
-- Added permanent security-regression tests.
-
-Status after correction: Round 2 source authorization defects corrected; no live/staging claim.
+Defects found: no route-specific pre-callback perimeter; generic future fact writes were insufficiently clinician-scoped; institutional/simulation routes lacked independent privileged gates/recent-auth; transparency lacked a patient-scoped assertion; outcome projection did not independently resolve its patient.
+Correction batch: added `CF01_Future24_Guard`, doctor+step-up fact-write gating, privileged institutional/simulation rules, patient-scoped transparency contract, follow-up-to-patient authorization and regression tests.
+Status: corrected at source level; no staging/live claim.
 
 ## Round 3 — failure modes, exception safety and degraded-state review
 Audit completed before correction.
+Defects found: callback exceptions could escape after authorization/state races; disabled feature state lacked a distinct safe-unavailable status; nested simulation scanning could cast arrays to strings; trace fallback could itself throw.
+Correction batch: wrapped all Future24 callbacks in a fail-closed boundary, added sanitized 503/400/403/500 envelopes, safe nested identifier scanning, non-throwing trace fallback and regression tests.
+Status: corrected at source level; no staging/live claim.
 
+## Round 4 — clinical-safety, data-minimization and adapter-output review
+Audit completed before correction.
 Defects found:
-1. Future24 callbacks could still propagate `RuntimeException`/`InvalidArgumentException` from state, authorization or contract checks directly into REST execution after a race or dependency change between the pre-callback guard and callback.
-2. Feature-disabled conditions were not represented by a distinct safe unavailable error class/status.
-3. Nested simulation fixtures could trigger an array-to-string warning while scanning forbidden real-subject identifiers.
-4. Trace-ID fallback itself used a cryptographic call that could theoretically throw during error construction.
+1. A future provider adapter result was trusted after route authorization without an independent minimum-necessary/authorization assertion in the response contract.
+2. Autonomous clinical-action rejection checked only selected top-level decision-support fields, so nested `dose`/`potency`/automatic-action fields could evade the check.
+3. Donor/payment priority rejection in transparency was likewise top-level only.
+4. No common last-line rejection existed for raw secrets/provider payloads, and simulation output did not have an independent recursive real-subject check.
 
-Correction batch after Round 3 audit:
-- Wrapped every Future24 callback in a common fail-closed error boundary.
-- Added a distinct unavailable exception mapped to a sanitized 503 envelope; invalid requests map to 400 and authorization races to 403.
-- Sanitized provider failures without returning provider exception text.
-- Corrected nested simulation identifier inspection without unsafe array casting.
-- Made fallback trace generation non-throwing.
-- Added permanent error-envelope regression tests.
+Correction batch after Round 4 audit:
+- Added `CF01_Future24_Response_Guard` as the final provider-response filter.
+- Required explicit provider assertions for authorization, minimum-necessary disclosure, CF-01 canonical ownership and contract version.
+- Added recursive rejection for autonomous diagnosis/prescription/dose/potency/treatment mutation signals.
+- Added recursive donor/payment/rank-bias rejection and global secret/raw-payload rejection.
+- Added independent synthetic/de-identified simulation-output enforcement and regression tests.
 
-Status after correction: Round 3 source reliability defects corrected; no live/staging claim.
+Status after correction: Round 4 source clinical-safety/data-minimization defects corrected; no live/staging claim.
