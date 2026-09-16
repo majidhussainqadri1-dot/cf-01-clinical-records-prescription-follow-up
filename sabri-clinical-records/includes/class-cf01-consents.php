@@ -2,7 +2,7 @@
 defined('ABSPATH') || exit;
 
 final class CF01_Consents {
-    public const PURPOSES = array('clinical_care', 'teleconsultation', 'images', 'recording', 'education', 'transfer', 'research');
+    public const PURPOSES = array('clinical_care', 'teleconsultation', 'images', 'recording', 'educational_reuse', 'transfer', 'research');
 
     public static function record(int $actor_id, string $patient_uuid, string $purpose, string $status, array $evidence): array {
         if (!in_array($purpose, self::PURPOSES, true)) {
