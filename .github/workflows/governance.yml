@@ -1,4 +1,4 @@
-name: CF-01 Unified R1-R4 Governance and Runtime Gates
+name: CF-01 Unified Governance and Runtime Gates
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
           echo "workflow_run=${GITHUB_RUN_ID}"
 
   php-exact-head:
-    name: PHP ${{ matrix.php }} R1-R4 clinical review — exact head
+    name: PHP ${{ matrix.php }} clinical review — exact head
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -59,7 +59,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Run syntax and ten review suites
+      - name: Run syntax and clinical review suites
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD:/app" -w /app "php:${{ matrix.php }}-cli" sh -lc '
@@ -91,7 +91,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Run 40 review-to-correction cycles and R1-R4 regressions
+      - name: Run 40 review-to-correction cycles and canonical regressions
         run: |
           set -euo pipefail
           python3 tools/run_40_reviews.py
@@ -111,7 +111,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Validate source policies and R1-R4 security regressions
+      - name: Validate source policies and canonical security regressions
         run: |
           set -euo pipefail
           node --check sabri-clinical-records/assets/js/clinical.js
@@ -172,7 +172,7 @@ jobs:
           compression-level: 0
 
   merge-ref-compatibility:
-    name: Governance and R1-R4 runtime merge-ref compatibility
+    name: Governance and runtime merge-ref compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -185,7 +185,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Validate merged governance and R1-R4 runtime surface
+      - name: Validate merged governance and runtime surface
         run: |
           set -euo pipefail
           python -m unittest discover -s tests -p 'test_*.py' -v
