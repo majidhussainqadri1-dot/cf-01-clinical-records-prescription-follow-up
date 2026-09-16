@@ -32,7 +32,7 @@ $migrations = $read('sabri-clinical-records/includes/class-cf01-migrations.php')
 $breakGlass = $read('sabri-clinical-records/includes/class-cf01-break-glass.php');
 
 $check(str_contains($css, '--cf01-primary:'), 'Green primary token is missing.');
-$check(str_contains($css, '#0b6b3a'), 'Approved green fallback is missing.');
+$check(str_contains(strtolower($css), '#087a4e'), 'Approved Sabri Green fallback is missing.');
 $check(!str_contains($css, '--cf01-orange'), 'Superseded orange primary token remains.');
 $check(str_contains($css, '.cf01-icon'), 'Meaningful icon component styling is missing.');
 $check(str_contains($css, '44px'), 'Minimum touch-target evidence is missing.');
