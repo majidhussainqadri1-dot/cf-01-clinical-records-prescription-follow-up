@@ -30,42 +30,58 @@ final class CF01_Audit {
     }
 
     private static function write(int $actor_id, string $action, string $object_type, string $object_uuid, string $purpose, array $metadata, string $result): string {
-        $uuid = CF01_DB::uuid();
-        $previous = CF01_DB::row('SELECT chain_hash FROM ' . CF01_DB::table('audit') . ' ORDER BY id DESC LIMIT 1');
-        $previous_hash = (string) ($previous['chain_hash'] ?? str_repeat('0', 64));
-        $record = array(
-            'event_uuid' => $uuid,
-            'actor_pseudonym' => self::actor_pseudonym($actor_id),
-            'action' => sanitize_key($action),
-            'object_type' => sanitize_key($object_type),
-            'object_uuid' => $object_uuid,
-            'purpose' => sanitize_key($purpose),
-            'result' => sanitize_key($result),
-            'metadata' => self::minimize($metadata),
-            'occurred_at' => CF01_DB::now(),
-            'previous_hash' => $previous_hash,
-        );
-        $record_hash = hash('sha256', CF01_Crypto::canonical_json($record));
-        $chain_hash = hash('sha256', $previous_hash . '|' . $record_hash);
         try {
-            CF01_DB::insert('audit', array(
-                'event_uuid' => $uuid,
-                'actor_pseudonym' => $record['actor_pseudonym'],
-                'action' => $record['action'],
-                'object_type' => $record['object_type'],
-                'object_uuid' => $object_uuid,
-                'purpose' => $record['purpose'],
-                'result' => $record['result'],
-                'metadata_cipher' => CF01_Crypto::encrypt($record['metadata'], 'audit-metadata'),
-                'record_hash' => $record_hash,
-                'previous_hash' => $previous_hash,
-                'chain_hash' => $chain_hash,
-                'occurred_at' => $record['occurred_at'],
-            ));
+            return CF01_DB::transaction(function () use ($actor_id, $action, $object_type, $object_uuid, $purpose, $metadata, $result): string {
+                $uuid = CF01_DB::uuid();
+                // A locking current-read serializes successors of the current audit
+                // head. When called inside a larger clinical transaction the row
+                // lock survives the nested savepoint until the outer commit.
+                $previous = CF01_DB::row('SELECT chain_hash FROM ' . CF01_DB::table('audit') . ' ORDER BY id DESC LIMIT 1 FOR UPDATE');
+                $previous_hash = (string) ($previous['chain_hash'] ?? str_repeat('0', 64));
+                $record = array(
+                    'event_uuid' => $uuid,
+                    'actor_pseudonym' => self::actor_pseudonym($actor_id),
+                    'action' => sanitize_key($action),
+                    'object_type' => sanitize_key($object_type),
+                    'object_uuid' => $object_uuid,
+                    'purpose' => sanitize_key($purpose),
+                    'result' => sanitize_key($result),
+                    'metadata' => self::minimize($metadata),
+                    'occurred_at' => CF01_DB::now(),
+                    'previous_hash' => $previous_hash,
+                );
+                $record_hash = hash('sha256', CF01_Crypto::canonical_json($record));
+                $chain_hash = hash('sha256', $previous_hash . '|' . $record_hash);
+                CF01_DB::insert('audit', array(
+                    'event_uuid' => $uuid,
+                    'actor_pseudonym' => $record['actor_pseudonym'],
+                    'action' => $record['action'],
+                    'object_type' => $record['object_type'],
+                    'object_uuid' => $object_uuid,
+                    'purpose' => $record['purpose'],
+                    'result' => $record['result'],
+                    'metadata_cipher' => CF01_Crypto::encrypt($record['metadata'], 'audit-metadata'),
+                    'record_hash' => $record_hash,
+                    'previous_hash' => $previous_hash,
+                    'chain_hash' => $chain_hash,
+                    'occurred_at' => $record['occurred_at'],
+                ));
+
+                // Fail closed if an existing deployment already contains, or a
+                // concurrent write manages to create, more than one successor to
+                // the same chain head. FOR UPDATE makes this a current locking read.
+                $successors = CF01_DB::rows(
+                    'SELECT event_uuid FROM ' . CF01_DB::table('audit') . ' WHERE previous_hash = %s FOR UPDATE',
+                    array($previous_hash)
+                );
+                if (count($successors) !== 1 || !hash_equals($uuid, (string) ($successors[0]['event_uuid'] ?? ''))) {
+                    throw new RuntimeException('Clinical audit chain continuity conflict detected.');
+                }
+                return $uuid;
+            });
         } catch (Throwable $error) {
             throw new RuntimeException('Clinical audit persistence failed; action cannot be treated as complete.', 0, $error);
         }
-        return $uuid;
     }
 
     private static function actor_pseudonym(int $actor_id): string {
@@ -131,12 +147,20 @@ final class CF01_Outbox {
         }
         $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table('outbox') . ' WHERE status IN (%s,%s) AND available_at <= %s ORDER BY id ASC LIMIT 50', array('pending', 'retry', CF01_DB::now()));
         foreach ($rows as $row) {
-            self::deliver($row);
+            try {
+                self::deliver($row);
+            } catch (Throwable $error) {
+                do_action('cf01_exception', $error, CF01_DB::uuid());
+                self::record_delivery_exception($row);
+            }
         }
     }
 
     public static function deliver(array $row): void {
-        $payload = CF01_Crypto::decrypt((string) $row['payload_cipher'], 'outbox-payload');
+        $payload = CF01_Crypto::decrypt((string) ($row['payload_cipher'] ?? ''), 'outbox-payload');
+        if (!is_array($payload)) {
+            throw new RuntimeException('Clinical outbox payload is invalid.');
+        }
         $request = array(
             'recipient_platform_uuid' => (string) ($payload['recipient_platform_uuid'] ?? ''),
             'template_key' => self::template((string) $row['event_name']),
@@ -152,27 +176,34 @@ final class CF01_Outbox {
             $result = array('accepted' => false, 'retryable' => true, 'code' => 'recipient_unavailable');
         } else {
             $result = CF01_Contracts::notify($request);
+            if (!is_array($result)) {
+                $result = array('accepted' => false, 'retryable' => true, 'code' => 'notification_contract_invalid');
+            }
         }
         $expected = (int) $row['row_version'];
         if (!empty($result['accepted']) || !empty($result['suppressed'])) {
-            CF01_DB::update_versioned('outbox', array(
+            $ok = CF01_DB::update_versioned('outbox', array(
                 'status' => !empty($result['suppressed']) ? 'suppressed' : 'delivered',
                 'delivered_at' => CF01_DB::now(),
                 'delivery_reference' => sanitize_text_field((string) ($result['reference'] ?? '')),
             ), array('event_uuid' => $row['event_uuid']), $expected);
+            if (!$ok) {
+                throw new RuntimeException('Clinical outbox row changed concurrently.');
+            }
             return;
         }
         $attempts = (int) $row['attempts'] + 1;
         $retryable = !empty($result['retryable']) && $attempts < 8;
-        CF01_DB::update_versioned('outbox', array(
+        $ok = CF01_DB::update_versioned('outbox', array(
             'status' => $retryable ? 'retry' : 'dead_letter',
             'attempts' => $attempts,
             'available_at' => gmdate('Y-m-d H:i:s', time() + min(3600, 60 * (2 ** min(6, $attempts)))),
             'last_error_code' => sanitize_key((string) ($result['code'] ?? 'delivery_failed')),
         ), array('event_uuid' => $row['event_uuid']), $expected);
+        if (!$ok) {
+            throw new RuntimeException('Clinical outbox row changed concurrently.');
+        }
     }
-
-
 
     public static function resolve_destination(int $actor_id, string $reference): string {
         $row = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('outbox') . ' WHERE event_uuid = %s LIMIT 1', array($reference));
@@ -209,6 +240,24 @@ final class CF01_Outbox {
         }
         CF01_Audit::access($actor_id, $patient_uuid, 'ClinicalNotificationDestinationResolved', 'outbox_event', $reference, 'clinical_navigation', 'success');
         return $url;
+    }
+
+    private static function record_delivery_exception(array $row): void {
+        if (empty($row['event_uuid']) || empty($row['row_version'])) {
+            return;
+        }
+        try {
+            $attempts = (int) ($row['attempts'] ?? 0) + 1;
+            CF01_DB::update_versioned('outbox', array(
+                'status' => $attempts < 3 ? 'retry' : 'dead_letter',
+                'attempts' => $attempts,
+                'available_at' => gmdate('Y-m-d H:i:s', time() + min(3600, 60 * (2 ** min(6, $attempts)))),
+                'last_error_code' => 'delivery_exception',
+            ), array('event_uuid' => (string) $row['event_uuid']), (int) $row['row_version']);
+        } catch (Throwable $ignored) {
+            // A concurrent worker may have advanced the row. Do not let one poison
+            // event stop processing of unrelated clinical notifications.
+        }
     }
 
     private static function notification_ttl(string $event): int {
