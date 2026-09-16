@@ -73,6 +73,7 @@ final class CF01_Plugin {
         add_action('cf01_followup_reconcile', array('CF01_Followups', 'reconcile_due'));
         add_action('send_headers', array(__CLASS__, 'send_private_headers'), 0);
         add_filter('rest_request_before_callbacks', array(__CLASS__, 'validate_future24_query'), 9, 3);
+        add_filter('rest_request_after_callbacks', array(__CLASS__, 'harden_future24_callback_response'), PHP_INT_MAX - 1, 3);
         add_filter('rest_post_dispatch', array(__CLASS__, 'harden_rest_response'), 999, 3);
         add_filter('rest_pre_serve_request', array(__CLASS__, 'send_rest_headers'), 0, 4);
         add_filter('wp_robots', array(__CLASS__, 'private_robots'));
@@ -131,6 +132,33 @@ final class CF01_Plugin {
         if ($response !== null || !self::is_future24_request($request)) {
             return $response;
         }
+
+        foreach (array('patient', 'followup') as $uuid_param) {
+            $uuid = trim((string) $request[$uuid_param]);
+            if ($uuid !== '' && !self::valid_uuid($uuid)) {
+                return new WP_Error('cf01_future24_identifier_invalid', __('The protected clinical identifier is invalid.', 'sabri-clinical-records'), array('status' => 400));
+            }
+        }
+
+        $route = '/' . ltrim((string) $request->get_route(), '/');
+        if ($route === '/clinical/v1/future/decision-support' && strtoupper((string) $request->get_method()) === 'POST') {
+            $data = $request->get_json_params();
+            $data = is_array($data) ? $data : array();
+            $patient_uuid = strtolower(trim((string) ($data['patient_uuid'] ?? '')));
+            if (!self::valid_uuid($patient_uuid)) {
+                return new WP_Error('cf01_future24_identifier_invalid', __('The protected clinical identifier is invalid.', 'sabri-clinical-records'), array('status' => 400));
+            }
+            $version = self::expected_version($request);
+            if ($version instanceof WP_Error) {
+                return $version;
+            }
+            try {
+                CF01_Authorization::expected_version(CF01_Patients::get($patient_uuid), $version);
+            } catch (Throwable $error) {
+                return new WP_Error('cf01_future24_version_conflict', __('The protected clinical record changed; refresh before continuing.', 'sabri-clinical-records'), array('status' => 409));
+            }
+        }
+
         $query = $request->get_query_params();
         if (count($query) > self::MAX_FUTURE_QUERY_PARAMS) {
             return new WP_Error('cf01_future24_query_too_broad', __('The protected clinical query is too broad.', 'sabri-clinical-records'), array('status' => 400));
@@ -162,6 +190,24 @@ final class CF01_Plugin {
         return $response;
     }
 
+    public static function harden_future24_callback_response($response, array $handler, WP_REST_Request $request) {
+        unset($handler);
+        if (!self::is_future24_request($request) || is_wp_error($response)) {
+            return $response;
+        }
+        $rest = rest_ensure_response($response);
+        $data = $rest->get_data();
+        if (is_array($data) && array_key_exists('_cf01', $data)) {
+            unset($data['_cf01']);
+            $rest->set_data($data);
+        }
+        $encoded = wp_json_encode($rest->get_data());
+        if (!is_string($encoded) || strlen($encoded) > self::MAX_FUTURE_RESPONSE_BYTES) {
+            return new WP_Error('cf01_future24_response_too_large', __('The protected clinical response exceeded its safe disclosure limit.', 'sabri-clinical-records'), array('status' => 502));
+        }
+        return $rest;
+    }
+
     public static function harden_rest_response($response, WP_REST_Server $server, WP_REST_Request $request) {
         unset($server);
         if (!self::is_clinical_rest_request($request)) {
@@ -172,7 +218,8 @@ final class CF01_Plugin {
             $response->header($name, $value);
         }
 
-        if (self::is_future24_request($request)) {
+        $future = self::is_future24_request($request);
+        if ($future) {
             $data = $response->get_data();
             if (is_array($data) && array_key_exists('_cf01', $data)) {
                 unset($data['_cf01']);
@@ -181,32 +228,28 @@ final class CF01_Plugin {
             $encoded = wp_json_encode($response->get_data());
             if (!is_string($encoded) || strlen($encoded) > self::MAX_FUTURE_RESPONSE_BYTES) {
                 $response->set_status(502);
-                $response->set_data(array(
-                    'code' => 'cf01_future24_response_too_large',
-                    'message' => __('The protected clinical response exceeded its safe disclosure limit.', 'sabri-clinical-records'),
-                    'data' => array('status' => 502),
-                ));
+                $response->set_data(array('code' => 'cf01_future24_response_too_large', 'message' => __('The protected clinical response exceeded its safe disclosure limit.', 'sabri-clinical-records'), 'data' => array('status' => 502)));
             } elseif ((int) $response->get_status() >= 200 && (int) $response->get_status() < 300) {
                 try {
                     self::audit_future24_success($request, (int) $response->get_status());
                 } catch (Throwable $error) {
                     do_action('cf01_exception', $error, CF01_DB::uuid());
                     $response->set_status(503);
-                    $response->set_data(array(
-                        'code' => 'cf01_future24_audit_unavailable',
-                        'message' => __('The protected clinical operation could not be completed with its required audit evidence.', 'sabri-clinical-records'),
-                        'data' => array('status' => 503),
-                    ));
+                    $response->set_data(array('code' => 'cf01_future24_audit_unavailable', 'message' => __('The protected clinical operation could not be completed with its required audit evidence.', 'sabri-clinical-records'), 'data' => array('status' => 503)));
                 }
+            } elseif ((int) $response->get_status() >= 400 && CF01_DB::is_enabled() && is_user_logged_in()) {
+                self::audit_future24_denial($request, (int) $response->get_status());
             }
         }
 
         $status = (int) $response->get_status();
-        if ($status >= 500 && !self::may_expose_diagnostics()) {
+        if ($future && $status >= 400 && $status < 500 && !self::may_expose_diagnostics()) {
+            $response->set_data(self::safe_future_error($status));
+        } elseif ($status >= 500 && !self::may_expose_diagnostics()) {
             $response->set_data(array(
                 'code' => 'cf01_internal_error',
                 'message' => __('The clinical service could not complete this request.', 'sabri-clinical-records'),
-                'data' => array('status' => $status),
+                'data' => array('status' => $status, 'trace_id' => CF01_DB::uuid()),
             ));
         }
         return $response;
@@ -214,17 +257,9 @@ final class CF01_Plugin {
 
     private static function audit_future24_success(WP_REST_Request $request, int $status): void {
         $route = '/' . ltrim((string) $request->get_route(), '/');
-        $patient_uuid = trim((string) $request['patient']);
-        if ($patient_uuid !== '' && preg_match('/^[a-f0-9-]{36}$/i', $patient_uuid)) {
-            CF01_Audit::access(
-                get_current_user_id(),
-                strtolower($patient_uuid),
-                'Future24ClinicalAccess',
-                'future24_route',
-                substr(hash('sha256', $route), 0, 36),
-                'clinical_care',
-                'success'
-            );
+        $patient_uuid = strtolower(trim((string) $request['patient']));
+        if ($patient_uuid !== '' && self::valid_uuid($patient_uuid)) {
+            CF01_Audit::access(get_current_user_id(), $patient_uuid, 'Future24ClinicalAccess', 'future24_route', substr(hash('sha256', $route), 0, 36), 'clinical_care', 'success');
             return;
         }
         CF01_Audit::record(
@@ -235,6 +270,53 @@ final class CF01_Plugin {
             str_contains($route, '/features') || str_contains($route, '/sidecar-assurance') ? 'clinical_governance' : 'clinical_care',
             array('method' => strtoupper((string) $request->get_method()), 'http_status' => $status)
         );
+    }
+
+    private static function audit_future24_denial(WP_REST_Request $request, int $status): void {
+        try {
+            $route = '/' . ltrim((string) $request->get_route(), '/');
+            CF01_Audit::denied(
+                get_current_user_id(),
+                'Future24RequestDenied',
+                'future24_route',
+                substr(hash('sha256', $route), 0, 36),
+                'clinical_care',
+                'http_' . max(400, min(599, $status))
+            );
+        } catch (Throwable $error) {
+            do_action('cf01_exception', $error, CF01_DB::uuid());
+        }
+    }
+
+    private static function safe_future_error(int $status): array {
+        $map = array(
+            400 => array('cf01_future24_invalid_request', 'The protected clinical request is invalid.'),
+            401 => array('cf01_authentication_required', 'Authentication is required.'),
+            403 => array('cf01_future24_access_unavailable', 'The protected clinical resource is unavailable.'),
+            404 => array('cf01_future24_access_unavailable', 'The protected clinical resource is unavailable.'),
+            409 => array('cf01_future24_conflict', 'The protected clinical state changed; refresh before continuing.'),
+            413 => array('cf01_future24_request_too_large', 'The protected clinical request is too large.'),
+            422 => array('cf01_future24_request_rejected', 'The protected clinical request was rejected by safety policy.'),
+            429 => array('cf01_future24_rate_limited', 'The protected clinical request is temporarily rate limited.'),
+        );
+        [$code, $message] = $map[$status] ?? array('cf01_future24_request_rejected', 'The protected clinical request could not be completed.');
+        return array('code' => $code, 'message' => __($message, 'sabri-clinical-records'), 'data' => array('status' => $status, 'trace_id' => CF01_DB::uuid()));
+    }
+
+    private static function expected_version(WP_REST_Request $request) {
+        $value = trim((string) $request->get_header('If-Match'));
+        if ($value === '') {
+            $value = trim((string) $request->get_header('X-CF01-Expected-Version'));
+        }
+        $value = trim($value, "\"W/ ");
+        if ($value === '' || !ctype_digit($value) || (int) $value < 1) {
+            return new WP_Error('cf01_future24_version_required', __('A positive protected clinical record version is required.', 'sabri-clinical-records'), array('status' => 400));
+        }
+        return (int) $value;
+    }
+
+    private static function valid_uuid(string $value): bool {
+        return (bool) preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', trim($value));
     }
 
     private static function is_clinical_rest_request(WP_REST_Request $request): bool {
