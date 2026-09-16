@@ -8,7 +8,8 @@ final class CF01_Authorization {
         'purge_record', 'merge_patient', 'link_platform_identity', 'update_guardian_context',
         'activate_module', 'review_break_glass', 'revoke_break_glass', 'decide_clinical_right',
         'fulfill_clinical_export', 'review_attachment', 'relink_attachment',
-        'run_clinical_migration', 'run_clinical_rollback', 'rotate_clinical_key', 'disable_module'
+        'run_clinical_migration', 'run_clinical_rollback', 'rotate_clinical_key', 'disable_module',
+        'activate_relationship', 'transition_relationship', 'withdraw_own_consent'
     );
 
     private const PRE_ACTIVATION_ACTIONS = array(
@@ -113,6 +114,10 @@ final class CF01_Authorization {
     }
 
     public static function consent(string $clinical_patient_uuid, string $purpose): array {
+        $purpose = sanitize_key($purpose);
+        if ($purpose === '') {
+            throw new RuntimeException('Active purpose-specific consent is required.');
+        }
         $row = CF01_DB::row(
             'SELECT * FROM ' . CF01_DB::table('consents') . ' WHERE patient_uuid = %s AND purpose = %s ORDER BY id DESC LIMIT 1',
             array($clinical_patient_uuid, $purpose)
@@ -139,8 +144,10 @@ final class CF01_Authorization {
             'auditor' => array('control_metadata', 'masked_audit'),
         );
         $requested = array_values(array_unique(array_map('sanitize_key', $requested)));
-        $allowed = array_map('sanitize_key', $policy[$role] ?? array());
-        $allowed = array_values(array_unique(array_map('sanitize_key', (array) apply_filters('cf01_field_policy', $allowed, $role, $purpose, $record))));
+        $baseline = array_values(array_unique(array_map('sanitize_key', $policy[$role] ?? array())));
+        $filtered = array_values(array_unique(array_map('sanitize_key', (array) apply_filters('cf01_field_policy', $baseline, $role, $purpose, $record))));
+        // Extension hooks may narrow native CF-01 access but must never broaden it.
+        $allowed = array_values(array_intersect($baseline, $filtered));
         return array_values(array_intersect($requested, $allowed));
     }
 
@@ -205,7 +212,7 @@ final class CF01_Authorization {
     private static function capability_allowed(int $user_id, string $action, array $context): bool {
         $patient_actions = array(
             'view_own_clinical_record', 'view_own_clinical_timeline', 'submit_patient_outcome',
-            'request_clinical_right', 'record_own_consent', 'view_own_access_history', 'export_record',
+            'request_clinical_right', 'record_own_consent', 'withdraw_own_consent', 'view_own_access_history', 'export_record',
             'consume_clinical_export'
         );
         $capability_map = array(
@@ -252,7 +259,10 @@ final class CF01_Authorization {
         } else {
             $allowed = self::can($user_id, 'cf01_treat_patients') || self::can($user_id, 'cf01_manage_clinical_records');
         }
-        return (bool) apply_filters('cf01_action_allowed', $allowed, $user_id, $action, $context);
+        // Policy hooks are fail-closed refinements only. A false native decision
+        // cannot be converted into an authorization grant by another plugin.
+        $filtered = (bool) apply_filters('cf01_action_allowed', $allowed, $user_id, $action, $context);
+        return $allowed && $filtered;
     }
 
     private static function can(int $user_id, string $capability): bool {
