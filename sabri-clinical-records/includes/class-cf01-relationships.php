@@ -98,10 +98,10 @@ final class CF01_Relationships {
 
     public static function transition(int $actor_id, string $relationship_uuid, string $next, string $reason, int $expected_version): array {
         $row = self::get($relationship_uuid);
-        self::authorize_relationship_actor($actor_id, $row, 'transition_relationship');
-        CF01_Authorization::expected_version($row, $expected_version);
         $next = sanitize_key($next);
         self::transition_allowed((string) $row['status'], $next);
+        self::authorize_transition_actor($actor_id, $row, $next);
+        CF01_Authorization::expected_version($row, $expected_version);
         $reason = trim($reason);
         if ($reason === '') {
             throw new InvalidArgumentException('A relationship transition reason is required.');
@@ -252,6 +252,25 @@ final class CF01_Relationships {
         if ($remaining['encounters'] || $remaining['prescriptions'] || $remaining['followups']) {
             throw new RuntimeException('Relationship termination reconciliation did not resolve all local clinical work.');
         }
+    }
+
+    private static function authorize_transition_actor(int $actor_id, array $relationship, string $next): void {
+        if ($next === 'ended' && CF01_Authorization::patient_owner($actor_id, (string) $relationship['patient_uuid'])) {
+            $context = CF01_Authorization::actor($actor_id, 'view_own_clinical_record', array(
+                'patient_uuid' => (string) $relationship['patient_uuid'],
+                'relationship_uuid' => (string) $relationship['relationship_uuid'],
+                'purpose' => (string) $relationship['purpose'],
+            ));
+            $recent = CF01_Contracts::recent_auth($actor_id, 'end_own_relationship');
+            if (empty($recent['valid']) || empty($recent['recent_auth']) || empty($recent['step_up']) || !CF01_Authorization::not_expired((string) ($recent['expires_at'] ?? ''))) {
+                throw new RuntimeException('Current recent step-up authentication is required to end a treating relationship.');
+            }
+            if (!hash_equals((string) ($context['membership']['platform_uuid'] ?? ''), (string) ($recent['subject_uuid'] ?? ''))) {
+                throw new RuntimeException('Recent authentication subject mismatch.');
+            }
+            return;
+        }
+        self::authorize_relationship_actor($actor_id, $relationship, 'transition_relationship');
     }
 
     private static function authorize_relationship_actor(int $actor_id, array $relationship, string $action): void {
