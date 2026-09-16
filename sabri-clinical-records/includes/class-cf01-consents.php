@@ -36,32 +36,34 @@ final class CF01_Consents {
         }
 
         $consent_uuid = CF01_DB::uuid();
-        CF01_DB::insert('consents', array(
-            'consent_uuid' => $consent_uuid,
-            'patient_uuid' => $patient_uuid,
-            'purpose' => $purpose,
-            'notice_version' => sanitize_text_field((string) $evidence['notice_version']),
-            'status' => $status,
-            'subject_hash' => CF01_Crypto::blind_index((string) $evidence['subject_platform_uuid'], 'consent-subject'),
-            'guardian_reference_cipher' => CF01_Crypto::encrypt((array) ($evidence['guardian'] ?? array()), 'consent-guardian'),
-            'evidence_cipher' => CF01_Crypto::encrypt($evidence, 'consent-evidence'),
-            'granted_at' => $status === 'granted' ? CF01_DB::now() : null,
-            'withdrawn_at' => null,
-            'expires_at' => self::normalize_expiry($evidence['expires_at'] ?? null),
-            'row_version' => 1,
-            'created_at' => CF01_DB::now(),
-            'updated_at' => CF01_DB::now(),
-        ));
         $event = $status === 'granted' ? 'ClinicalConsentGranted' : 'ClinicalConsentDeclined';
-        CF01_Audit::record($actor_id, $event, 'clinical_consent', $consent_uuid, $purpose, array('status' => $status));
-        CF01_Outbox::enqueue($event, array('consent_uuid' => $consent_uuid, 'patient_uuid' => $patient_uuid, 'purpose' => $purpose), $consent_uuid);
+        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $purpose, $status, $evidence, $consent_uuid, $event): void {
+            CF01_DB::insert('consents', array(
+                'consent_uuid' => $consent_uuid,
+                'patient_uuid' => $patient_uuid,
+                'purpose' => $purpose,
+                'notice_version' => sanitize_text_field((string) $evidence['notice_version']),
+                'status' => $status,
+                'subject_hash' => CF01_Crypto::blind_index((string) $evidence['subject_platform_uuid'], 'consent-subject'),
+                'guardian_reference_cipher' => CF01_Crypto::encrypt((array) ($evidence['guardian'] ?? array()), 'consent-guardian'),
+                'evidence_cipher' => CF01_Crypto::encrypt($evidence, 'consent-evidence'),
+                'granted_at' => $status === 'granted' ? CF01_DB::now() : null,
+                'withdrawn_at' => null,
+                'expires_at' => self::normalize_expiry($evidence['expires_at'] ?? null),
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+            CF01_Audit::record($actor_id, $event, 'clinical_consent', $consent_uuid, $purpose, array('status' => $status));
+            CF01_Outbox::enqueue($event, array('consent_uuid' => $consent_uuid, 'patient_uuid' => $patient_uuid, 'purpose' => $purpose), $consent_uuid);
+        });
         return self::get($consent_uuid);
     }
 
     public static function withdraw(int $actor_id, string $consent_uuid, string $reason, int $expected_version): array {
         $row = self::get($consent_uuid);
         $patient = CF01_Patients::get((string) $row['patient_uuid']);
-        self::authorize_subject($actor_id, (string) $row['patient_uuid'], $patient, (string) $row['purpose'], array());
+        self::authorize_withdrawal_subject($actor_id, (string) $row['patient_uuid'], $patient, (string) $row['purpose']);
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['status'] ?? '') !== 'granted') {
             throw new RuntimeException('Only an active consent may be withdrawn.');
@@ -70,16 +72,23 @@ final class CF01_Consents {
         if ($reason === '') {
             throw new InvalidArgumentException('Consent withdrawal reason is required.');
         }
-        $ok = CF01_DB::update_versioned('consents', array(
-            'status' => 'withdrawn',
-            'withdrawn_at' => CF01_DB::now(),
-            'withdrawal_reason_cipher' => CF01_Crypto::encrypt($reason, 'consent-withdrawal'),
-        ), array('consent_uuid' => $consent_uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Consent changed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'ClinicalConsentWithdrawn', 'clinical_consent', $consent_uuid, (string) $row['purpose'], array());
-        CF01_Outbox::enqueue('ClinicalConsentWithdrawn', array('consent_uuid' => $consent_uuid, 'patient_uuid' => $row['patient_uuid'], 'purpose' => $row['purpose']), $consent_uuid);
+        CF01_DB::transaction(function () use ($actor_id, $consent_uuid, $row, $reason, $expected_version): void {
+            $current = self::get_for_update($consent_uuid);
+            CF01_Authorization::expected_version($current, $expected_version);
+            if (($current['status'] ?? '') !== 'granted') {
+                throw new RuntimeException('Only an active consent may be withdrawn.');
+            }
+            $ok = CF01_DB::update_versioned('consents', array(
+                'status' => 'withdrawn',
+                'withdrawn_at' => CF01_DB::now(),
+                'withdrawal_reason_cipher' => CF01_Crypto::encrypt($reason, 'consent-withdrawal'),
+            ), array('consent_uuid' => $consent_uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Consent changed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalConsentWithdrawn', 'clinical_consent', $consent_uuid, (string) $row['purpose'], array());
+            CF01_Outbox::enqueue('ClinicalConsentWithdrawn', array('consent_uuid' => $consent_uuid, 'patient_uuid' => $row['patient_uuid'], 'purpose' => $row['purpose']), $consent_uuid);
+        });
         return self::get($consent_uuid);
     }
 
@@ -98,6 +107,14 @@ final class CF01_Consents {
         } catch (Throwable $error) {
             return false;
         }
+    }
+
+    private static function get_for_update(string $uuid): array {
+        $row = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('consents') . ' WHERE consent_uuid = %s LIMIT 1 FOR UPDATE', array($uuid));
+        if (!$row) {
+            throw new RuntimeException('Consent record is unavailable.');
+        }
+        return $row;
     }
 
     private static function authorize_subject(int $actor_id, string $patient_uuid, array $patient, string $purpose, array $evidence): array {
@@ -120,6 +137,16 @@ final class CF01_Consents {
         }
     }
 
+    private static function authorize_withdrawal_subject(int $actor_id, string $patient_uuid, array $patient, string $purpose): array {
+        if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+            CF01_Authorization::actor($actor_id, 'withdraw_own_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
+            return array('role' => 'patient');
+        }
+        $context = CF01_Role_Context::resolve($actor_id, $patient_uuid, $purpose, 'guardian');
+        CF01_Authorization::actor($actor_id, 'withdraw_own_consent', array('patient_uuid' => $patient_uuid, 'purpose' => $purpose));
+        return $context;
+    }
+
     private static function validate_subject_identity(int $actor_id, string $patient_uuid, string $purpose, array $patient, string $subject_platform_uuid, array $authority): void {
         $patient_platform_uuid = CF01_Crypto::decrypt((string) ($patient['platform_subject_cipher'] ?? ''), 'patient-platform-link');
         $guardian = CF01_Patients::guardian_context($patient);
@@ -134,7 +161,10 @@ final class CF01_Consents {
         }
         if ($matches_guardian) {
             $assertion = CF01_Contracts::guardian_authority($actor_id, $patient_uuid, $purpose, (string) ($guardian['reference'] ?? ''));
-            if (empty($assertion['valid'])) {
+            if (empty($assertion['valid'])
+                || (int) ($assertion['authority_version'] ?? 0) !== (int) ($guardian['authority_version'] ?? 0)
+                || !hash_equals((string) ($guardian['contract_version'] ?? ''), (string) ($assertion['contract_version'] ?? ''))
+            ) {
                 throw new RuntimeException('Guardian authority is no longer current.');
             }
         }
@@ -147,7 +177,9 @@ final class CF01_Consents {
         }
         $stored_reference = trim((string) ($guardian['reference'] ?? ''));
         $stored_subject = trim((string) ($guardian['platform_uuid'] ?? ''));
-        if ($stored_reference === '' || $stored_subject === '') {
+        $stored_authority_version = (int) ($guardian['authority_version'] ?? 0);
+        $stored_contract_version = (string) ($guardian['contract_version'] ?? '');
+        if ($stored_reference === '' || $stored_subject === '' || $stored_authority_version < 1 || $stored_contract_version === '') {
             throw new RuntimeException('Verified guardian authority evidence is incomplete.');
         }
         if (empty($guardian['expires_at']) || !CF01_Authorization::not_expired((string) $guardian['expires_at'])) {
@@ -172,6 +204,8 @@ final class CF01_Consents {
         if (empty($assertion['valid'])
             || !hash_equals($stored_subject, (string) ($assertion['actor_platform_uuid'] ?? ''))
             || !hash_equals($stored_reference, (string) ($assertion['guardian_reference'] ?? ''))
+            || (int) ($assertion['authority_version'] ?? 0) !== $stored_authority_version
+            || !hash_equals($stored_contract_version, (string) ($assertion['contract_version'] ?? ''))
         ) {
             throw new RuntimeException('Current guardian authority evidence is required for minor clinical consent.');
         }
