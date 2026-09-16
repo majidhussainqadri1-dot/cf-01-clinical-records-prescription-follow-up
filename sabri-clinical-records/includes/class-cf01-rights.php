@@ -57,7 +57,6 @@ final class CF01_Rights {
     public static function decide(int $actor_id, string $uuid, string $decision, array $details, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::actor($actor_id, 'decide_clinical_right', array('patient_uuid' => $row['patient_uuid'], 'case_uuid' => $uuid));
-        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         CF01_Authorization::expected_version($row, $expected_version);
         if ((int) ($row['requested_by_user_id'] ?? 0) === $actor_id) {
             throw new RuntimeException('A rights requester cannot decide the same request.');
@@ -71,6 +70,7 @@ final class CF01_Rights {
         if (empty($details['reason'])) {
             throw new InvalidArgumentException('A reasoned rights decision is required.');
         }
+        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         if (($row['request_type'] ?? '') === 'export' && $decision === 'partially_approved') {
             $approved_scope = self::normalize_export_scope((array) ($details['approved_scope'] ?? array()));
             if (!$approved_scope) {
@@ -106,7 +106,6 @@ final class CF01_Rights {
     public static function fulfill_export(int $actor_id, string $uuid, string $export_reference, int $expected_version): array {
         $row = self::get($uuid);
         CF01_Authorization::actor($actor_id, 'fulfill_clinical_export', array('patient_uuid' => $row['patient_uuid'], 'case_uuid' => $uuid));
-        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['request_type'] ?? '') !== 'export' || !in_array((string) $row['status'], array('approved', 'partially_approved'), true)) {
             throw new RuntimeException('Only an approved export request may be fulfilled.');
@@ -114,6 +113,7 @@ final class CF01_Rights {
         if ((int) ($row['requested_by_user_id'] ?? 0) === $actor_id || (int) ($row['assigned_user_id'] ?? 0) === $actor_id) {
             throw new RuntimeException('Export review and fulfillment require separated duties.');
         }
+        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         if (trim($export_reference) === '' || str_contains($export_reference, '://') || preg_match('/[?&](token|key|secret|signature|session|authorization)=/i', $export_reference)) {
             throw new InvalidArgumentException('Secure opaque export reference is required.');
         }
@@ -227,13 +227,13 @@ final class CF01_Rights {
     public static function export_manifest_for_case(int $actor_id, string $case_uuid, array $scope): array {
         $case = self::get($case_uuid);
         CF01_Authorization::actor($actor_id, 'fulfill_clinical_export', array('patient_uuid' => $case['patient_uuid'], 'case_uuid' => $case_uuid));
-        self::require_records_scope($actor_id, (string) $case['patient_uuid']);
         if (($case['request_type'] ?? '') !== 'export' || !in_array((string) $case['status'], array('approved', 'partially_approved'), true)) {
             throw new RuntimeException('An approved export case is required.');
         }
         if ((int) ($case['requested_by_user_id'] ?? 0) === $actor_id || (int) ($case['assigned_user_id'] ?? 0) === $actor_id) {
             throw new RuntimeException('Export review and generation require separated duties.');
         }
+        self::require_records_scope($actor_id, (string) $case['patient_uuid']);
         $requested_scope = self::normalize_export_scope($scope);
         $approved_scope = self::approved_export_scope($case);
         if (!$requested_scope || array_diff($requested_scope, $approved_scope)) {
@@ -330,7 +330,7 @@ final class CF01_Rights {
     public static function access_history(int $actor_id, string $patient_uuid, int $limit = 50, string $before = ''): array {
         CF01_Patients::get($patient_uuid);
         if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
-            CF01_Authorization::actor($actor_id, 'view_own_access_history', array('patient_uuid' => $patient_uuid));
+            CF01_Authorization::actor($actor_id, 'view_own_access_history');
         } else {
             CF01_Authorization::actor($actor_id, 'view_access_history', array('patient_uuid' => $patient_uuid));
             self::require_records_scope($actor_id, $patient_uuid);
