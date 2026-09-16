@@ -3,8 +3,8 @@ defined('ABSPATH') || exit;
 
 final class CF01_Authorization {
     private const HIGH_RISK = array(
-        'sign_encounter', 'sign_prescription', 'add_encounter_addendum', 'mark_encounter_entered_in_error',
-        'export_record', 'consume_clinical_export', 'grant_break_glass', 'release_hold', 'place_hold',
+        'sign_encounter', 'sign_prescription', 'add_encounter_addendum', 'mark_encounter_entered_in_error', 'mark_encounter_error',
+        'export_record', 'consume_clinical_export', 'grant_break_glass', 'use_break_glass', 'release_hold', 'place_hold',
         'purge_record', 'merge_patient', 'link_platform_identity', 'update_guardian_context',
         'activate_module', 'review_break_glass', 'revoke_break_glass', 'decide_clinical_right',
         'fulfill_clinical_export', 'review_attachment', 'relink_attachment',
