@@ -107,17 +107,38 @@ final class CF01_Relationships {
             self::require_target_practitioner((int) $row['doctor_user_id'], 'reactivate_relationship', (string) $row['purpose']);
             CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
         }
+
         if ($next === 'ended') {
-            self::require_termination_reconciliation($actor_id, $row, $reason);
+            return CF01_DB::transaction(function () use ($actor_id, $relationship_uuid, $reason, $expected_version): array {
+                $current = self::get_for_update($relationship_uuid);
+                CF01_Authorization::expected_version($current, $expected_version);
+                self::transition_allowed((string) $current['status'], 'ended');
+                self::require_termination_reconciliation($actor_id, $current, $reason);
+                $ok = CF01_DB::update_versioned('relationships', array(
+                    'status' => 'ended',
+                    'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
+                    'authorized_by' => $actor_id,
+                    'ends_at' => CF01_DB::now(),
+                ), array('relationship_uuid' => $relationship_uuid), $expected_version);
+                if (!$ok) {
+                    throw new RuntimeException('Relationship changed concurrently.');
+                }
+                CF01_Audit::record($actor_id, 'CareRelationshipEnded', 'care_relationship', $relationship_uuid, (string) $current['purpose'], array('status' => 'ended'));
+                CF01_Outbox::enqueue('CareRelationshipEnded', array(
+                    'relationship_uuid' => $relationship_uuid,
+                    'patient_uuid' => (string) $current['patient_uuid'],
+                    'status' => 'ended',
+                ), $relationship_uuid);
+                return self::get($relationship_uuid);
+            });
         }
+
         $data = array(
             'status' => $next,
             'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
             'authorized_by' => $actor_id,
         );
-        if ($next === 'ended') {
-            $data['ends_at'] = CF01_DB::now();
-        } elseif ($next === 'active') {
+        if ($next === 'active') {
             $data['starts_at'] = CF01_DB::now();
             $data['ends_at'] = null;
         }
@@ -125,9 +146,12 @@ final class CF01_Relationships {
         if (!$ok) {
             throw new RuntimeException('Relationship changed concurrently.');
         }
-        $event = $next === 'ended' ? 'CareRelationshipEnded' : 'CareRelationshipStatusChanged';
-        CF01_Audit::record($actor_id, $event, 'care_relationship', $relationship_uuid, (string) $row['purpose'], array('status' => $next));
-        CF01_Outbox::enqueue($event, array('relationship_uuid' => $relationship_uuid, 'status' => $next), $relationship_uuid);
+        CF01_Audit::record($actor_id, 'CareRelationshipStatusChanged', 'care_relationship', $relationship_uuid, (string) $row['purpose'], array('status' => $next));
+        CF01_Outbox::enqueue('CareRelationshipStatusChanged', array(
+            'relationship_uuid' => $relationship_uuid,
+            'patient_uuid' => (string) $row['patient_uuid'],
+            'status' => $next,
+        ), $relationship_uuid);
         return self::get($relationship_uuid);
     }
 
@@ -149,39 +173,75 @@ final class CF01_Relationships {
         return self::TRANSITIONS;
     }
 
+    private static function get_for_update(string $uuid): array {
+        $row = CF01_DB::row(
+            'SELECT * FROM ' . CF01_DB::table('relationships') . ' WHERE relationship_uuid = %s LIMIT 1 FOR UPDATE',
+            array($uuid)
+        );
+        if (!$row) {
+            throw new RuntimeException('Care relationship is unavailable.');
+        }
+        return $row;
+    }
 
+    private static function termination_open_items(array $relationship): array {
+        $encounters = CF01_DB::table('encounters');
+        $prescriptions = CF01_DB::table('prescriptions');
+        $followups = CF01_DB::table('followups');
+        $relationship_uuid = (string) $relationship['relationship_uuid'];
 
-    private static function require_termination_reconciliation(int $actor_id, array $relationship, string $reason): void {
         $open_encounters = CF01_DB::rows(
-            'SELECT encounter_uuid, status FROM ' . CF01_DB::table('encounters') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
-            array($relationship['relationship_uuid'], 'draft', 'in_progress', 'ready_to_sign')
+            'SELECT encounter_uuid, status FROM ' . $encounters . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
+            array($relationship_uuid, 'draft', 'in_progress', 'ready_to_sign')
         );
         $open_prescriptions = CF01_DB::rows(
-            'SELECT prescription_uuid, status FROM ' . CF01_DB::table('prescriptions') . ' WHERE relationship_uuid = %s AND status IN (%s,%s,%s) LIMIT 101',
-            array($relationship['relationship_uuid'], 'draft', 'ready_to_sign', 'signed')
+            'SELECT p.prescription_uuid, p.status FROM ' . $prescriptions . ' p INNER JOIN ' . $encounters . ' e ON e.encounter_uuid = p.encounter_uuid WHERE e.relationship_uuid = %s AND p.status IN (%s,%s,%s) LIMIT 101',
+            array($relationship_uuid, 'draft', 'ready_to_sign', 'signed')
         );
-        if (!$open_encounters && !$open_prescriptions) {
+        $open_followups = CF01_DB::rows(
+            'SELECT f.followup_uuid, f.status FROM ' . $followups . ' f INNER JOIN ' . $prescriptions . ' p ON p.prescription_uuid = f.prescription_uuid INNER JOIN ' . $encounters . ' e ON e.encounter_uuid = p.encounter_uuid WHERE e.relationship_uuid = %s AND f.status NOT IN (%s,%s) LIMIT 101',
+            array($relationship_uuid, 'closed', 'cancelled')
+        );
+
+        if (count($open_encounters) > 100 || count($open_prescriptions) > 100 || count($open_followups) > 100) {
+            throw new RuntimeException('Relationship termination reconciliation exceeds the bounded synchronous workload; use the approved reconciliation job.');
+        }
+        return array(
+            'encounters' => $open_encounters,
+            'prescriptions' => $open_prescriptions,
+            'followups' => $open_followups,
+        );
+    }
+
+    private static function require_termination_reconciliation(int $actor_id, array $relationship, string $reason): void {
+        $open = self::termination_open_items($relationship);
+        if (!$open['encounters'] && !$open['prescriptions'] && !$open['followups']) {
             return;
         }
         $request = array(
-            'contract_version' => '1.0.0',
+            'contract_version' => CF01_CONTRACT_VERSION,
             'relationship_uuid' => (string) $relationship['relationship_uuid'],
             'patient_uuid' => (string) $relationship['patient_uuid'],
             'doctor_user_id' => (int) $relationship['doctor_user_id'],
             'reason_hash' => hash('sha256', trim($reason)),
-            'open_encounters' => array_column($open_encounters, 'encounter_uuid'),
-            'open_prescriptions' => array_column($open_prescriptions, 'prescription_uuid'),
+            'open_encounters' => array_column($open['encounters'], 'encounter_uuid'),
+            'open_prescriptions' => array_column($open['prescriptions'], 'prescription_uuid'),
+            'open_followups' => array_column($open['followups'], 'followup_uuid'),
             'future_access_revoked_on_commit' => true,
         );
         $result = apply_filters('cf01_relationship_termination_reconciliation', null, $request, $actor_id);
         if (!is_array($result)
-            || ($result['contract_version'] ?? '') !== '1.0.0'
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($result['contract_version'] ?? ''))
             || empty($result['accepted'])
             || empty($result['reconciled'])
             || empty($result['continuity_instructions_recorded'])
             || empty($result['open_items_resolved'])
         ) {
             throw new RuntimeException('Open clinical work must be reconciled before relationship termination.');
+        }
+        $remaining = self::termination_open_items($relationship);
+        if ($remaining['encounters'] || $remaining['prescriptions'] || $remaining['followups']) {
+            throw new RuntimeException('Relationship termination reconciliation did not resolve all local clinical work.');
         }
     }
 
