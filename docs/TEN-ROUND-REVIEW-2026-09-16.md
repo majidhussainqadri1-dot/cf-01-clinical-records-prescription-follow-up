@@ -5,7 +5,6 @@ Review baseline: `9e58cf82dbb84f1a49804aa714a823878364f1f7`.
 Process law: each numbered round is audited to completion first; only after that round closes are its collected defects corrected. The next round begins only after the correction batch is complete.
 
 ## Round 1 — governing-plan parity, scope and source inventory
-
 Audit completed before correction.
 
 Defects found:
@@ -24,7 +23,6 @@ Correction batch after Round 1 audit:
 Status after correction: source-level Round 1 defects corrected. This does not claim staging, deployment, database migration or live acceptance.
 
 ## Round 2 — authorization, IDOR and privileged-operation review
-
 Audit completed before correction.
 
 Defects found:
@@ -44,3 +42,22 @@ Correction batch after Round 2 audit:
 - Added permanent security-regression tests.
 
 Status after correction: Round 2 source authorization defects corrected; no live/staging claim.
+
+## Round 3 — failure modes, exception safety and degraded-state review
+Audit completed before correction.
+
+Defects found:
+1. Future24 callbacks could still propagate `RuntimeException`/`InvalidArgumentException` from state, authorization or contract checks directly into REST execution after a race or dependency change between the pre-callback guard and callback.
+2. Feature-disabled conditions were not represented by a distinct safe unavailable error class/status.
+3. Nested simulation fixtures could trigger an array-to-string warning while scanning forbidden real-subject identifiers.
+4. Trace-ID fallback itself used a cryptographic call that could theoretically throw during error construction.
+
+Correction batch after Round 3 audit:
+- Wrapped every Future24 callback in a common fail-closed error boundary.
+- Added a distinct unavailable exception mapped to a sanitized 503 envelope; invalid requests map to 400 and authorization races to 403.
+- Sanitized provider failures without returning provider exception text.
+- Corrected nested simulation identifier inspection without unsafe array casting.
+- Made fallback trace generation non-throwing.
+- Added permanent error-envelope regression tests.
+
+Status after correction: Round 3 source reliability defects corrected; no live/staging claim.
