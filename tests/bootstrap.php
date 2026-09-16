@@ -179,7 +179,7 @@ final class CF01_Fake_WPDB {
         if (!preg_match('/\bFROM\s+([A-Za-z0-9_]+)/i', $sql, $match)) return array();
         $table = $match[1];
         $rows = array_values($this->tables[$table] ?? array());
-        if (preg_match('/\bWHERE\s+(.+?)(?:\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|$)/is', $sql, $whereMatch)) {
+        if (preg_match('/\bWHERE\s+(.+?)(?:\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|\bFOR\s+UPDATE\b|$)/is', $sql, $whereMatch)) {
             $where = trim($whereMatch[1]);
             $rows = array_values(array_filter($rows, fn(array $row): bool => $this->matchesSql($row, $where)));
         }
