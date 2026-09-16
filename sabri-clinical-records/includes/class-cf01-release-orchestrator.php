@@ -250,7 +250,8 @@ final class CF01_Release_Orchestrator {
             $result = apply_filters('cf01_file08_extraction_batch', null, $batch, $cursor);
             self::validate_file08_result($result, $validated);
             $counts = array('seen' => 0, 'eligible' => 0, 'quarantined' => 0, 'written' => 0, 'existing' => 0);
-            CF01_DB::transaction(function () use ($actor_id, $batch, $result, &$counts): void {
+            $ledger_uuid = CF01_DB::uuid();
+            $receipt = CF01_DB::transaction(function () use ($actor_id, $batch, $result, $validated, $cursor, $ledger_uuid, &$counts): array {
                 foreach ((array) $result['records'] as $record) {
                     $counts['seen']++;
                     if (!is_array($record) || empty($record['source_reference']) || empty($record['patient_platform_uuid'])) {
@@ -264,24 +265,24 @@ final class CF01_Release_Orchestrator {
                     $written = self::write_file08_patient($actor_id, $record);
                     $counts[$written ? 'written' : 'existing']++;
                 }
+                $receipt = array(
+                    'migration_id' => $validated['migration_id'],
+                    'ledger_migration_uuid' => $ledger_uuid,
+                    'request_hash' => $validated['request_hash'],
+                    'source_snapshot_sha256' => $validated['source_snapshot_sha256'],
+                    'source_contract_version' => self::FILE08_CONTRACT_VERSION,
+                    'cursor' => $cursor,
+                    'next_cursor' => sanitize_text_field((string) $result['next_cursor']),
+                    'complete' => !empty($result['complete']),
+                    'dry_run' => (bool) $batch['dry_run'],
+                    'counts' => $counts,
+                    'integrity_root' => hash('sha256', CF01_Crypto::canonical_json(array($validated['request_hash'], $counts, (string) $result['next_cursor']))),
+                    'completed_at' => CF01_DB::now(),
+                    'replayed' => false,
+                );
+                self::record_migration_batch($receipt, $ledger_uuid);
+                return $receipt;
             });
-            $ledger_uuid = CF01_DB::uuid();
-            $receipt = array(
-                'migration_id' => $validated['migration_id'],
-                'ledger_migration_uuid' => $ledger_uuid,
-                'request_hash' => $validated['request_hash'],
-                'source_snapshot_sha256' => $validated['source_snapshot_sha256'],
-                'source_contract_version' => self::FILE08_CONTRACT_VERSION,
-                'cursor' => $cursor,
-                'next_cursor' => sanitize_text_field((string) $result['next_cursor']),
-                'complete' => !empty($result['complete']),
-                'dry_run' => (bool) $batch['dry_run'],
-                'counts' => $counts,
-                'integrity_root' => hash('sha256', CF01_Crypto::canonical_json(array($validated['request_hash'], $counts, (string) $result['next_cursor']))),
-                'completed_at' => CF01_DB::now(),
-                'replayed' => false,
-            );
-            self::record_migration_batch($receipt, $ledger_uuid);
             update_option($claim_key, array('status' => 'completed', 'request_hash' => $validated['request_hash'], 'receipt' => $receipt), false);
             return $receipt;
         } catch (Throwable $error) {
@@ -469,9 +470,9 @@ final class CF01_Release_Orchestrator {
             if (!$updated) {
                 throw new RuntimeException('Migration rollback changed concurrently or was already applied.');
             }
+            CF01_Audit::record(get_current_user_id(), 'ClinicalMigrationRolledBack', 'migration', (string) $migration['migration_uuid'], 'migration', array('rollback_id' => (string) $receipt['rollback_id']));
             return $receipt;
         });
-        CF01_Audit::record(get_current_user_id(), 'ClinicalMigrationRolledBack', 'migration', (string) $migration['migration_uuid'], 'migration', array('rollback_id' => (string) $receipt['rollback_id']));
         $result['orchestrator_committed'] = true;
         return $result;
     }
