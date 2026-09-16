@@ -16,7 +16,7 @@ final class CF01_Followups {
     );
 
     public static function plan(int $actor_id, string $patient_uuid, string $prescription_uuid, array $plan): array {
-        CF01_Authorization::clinician($actor_id, 'plan_followup');
+        $clinician = CF01_Authorization::clinician($actor_id, 'plan_followup');
         CF01_Authorization::consent($patient_uuid, 'clinical_care');
         $prescription = CF01_Prescriptions::get($prescription_uuid);
         if ((string) $prescription['patient_uuid'] !== $patient_uuid || (string) $prescription['status'] !== 'signed') {
@@ -30,39 +30,57 @@ final class CF01_Followups {
             throw new InvalidArgumentException('Follow-up overdue time must be after its due time.');
         }
         $questionnaire = self::normalize_questionnaire((array) ($plan['questionnaire'] ?? array()));
+        $method = sanitize_key((string) ($plan['method'] ?? 'secure_questionnaire'));
+        if (!in_array($method, array('secure_questionnaire', 'teleconsultation', 'in_person', 'phone'), true)) {
+            throw new InvalidArgumentException('Unsupported follow-up method.');
+        }
+        $professional_uuid = sanitize_text_field((string) ($clinician['professional']['professional_uuid'] ?? ''));
+        if ($professional_uuid === '') {
+            throw new RuntimeException('Responsible clinician identity is required for follow-up planning.');
+        }
         $uuid = CF01_DB::uuid();
-        CF01_DB::insert('followups', array(
-            'followup_uuid' => $uuid,
-            'patient_uuid' => $patient_uuid,
-            'prescription_uuid' => $prescription_uuid,
-            'status' => 'planned',
-            'due_at' => $due_at,
-            'overdue_at' => $overdue_at,
-            'reminder_policy_json' => wp_json_encode(self::normalize_reminders((array) ($plan['reminders'] ?? array()), $patient_uuid)),
-            'questionnaire_cipher' => CF01_Crypto::encrypt($questionnaire, 'followup-questionnaire'),
-            'plan_cipher' => CF01_Crypto::encrypt(array(
-                'objectives' => self::sanitize($plan['objectives'] ?? array()),
-                'expected_outcomes' => self::sanitize($plan['expected_outcomes'] ?? array()),
-                'red_flag_instructions' => self::sanitize($plan['red_flag_instructions'] ?? ''),
-                'next_plan' => self::sanitize($plan['next_plan'] ?? ''),
-            ), 'followup-plan'),
-            'created_by_user_id' => $actor_id,
-            'reviewed_by_user_id' => null,
-            'reviewed_at' => null,
-            'closed_at' => null,
-            'row_version' => 1,
-            'created_at' => CF01_DB::now(),
-            'updated_at' => CF01_DB::now(),
-        ));
-        CF01_Audit::record($actor_id, 'FollowUpPlanned', 'follow_up_plan', $uuid, 'clinical_care', array('due_at' => $due_at));
-        CF01_Outbox::enqueue('FollowUpPlanned', array('followup_uuid' => $uuid, 'patient_uuid' => $patient_uuid, 'due_at' => $due_at), $uuid);
+        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $prescription_uuid, $plan, $due_at, $overdue_at, $questionnaire, $method, $professional_uuid, $uuid): void {
+            CF01_DB::insert('followups', array(
+                'followup_uuid' => $uuid,
+                'patient_uuid' => $patient_uuid,
+                'prescription_uuid' => $prescription_uuid,
+                'status' => 'planned',
+                'due_at' => $due_at,
+                'overdue_at' => $overdue_at,
+                'reminder_policy_json' => wp_json_encode(self::normalize_reminders((array) ($plan['reminders'] ?? array()), $patient_uuid)),
+                'questionnaire_cipher' => CF01_Crypto::encrypt($questionnaire, 'followup-questionnaire'),
+                'plan_cipher' => CF01_Crypto::encrypt(array(
+                    'objectives' => self::sanitize($plan['objectives'] ?? array()),
+                    'expected_outcomes' => self::sanitize($plan['expected_outcomes'] ?? array()),
+                    'red_flag_instructions' => self::sanitize($plan['red_flag_instructions'] ?? ''),
+                    'next_plan' => self::sanitize($plan['next_plan'] ?? ''),
+                    'method' => $method,
+                    'responsible_clinician_user_id' => $actor_id,
+                    'responsible_professional_uuid' => $professional_uuid,
+                ), 'followup-plan'),
+                'created_by_user_id' => $actor_id,
+                'reviewed_by_user_id' => null,
+                'reviewed_at' => null,
+                'closed_at' => null,
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+            CF01_Audit::record($actor_id, 'FollowUpPlanned', 'follow_up_plan', $uuid, 'clinical_care', array('due_at' => $due_at, 'method' => $method));
+            CF01_Outbox::enqueue('FollowUpPlanned', array('followup_uuid' => $uuid, 'patient_uuid' => $patient_uuid, 'due_at' => $due_at), $uuid);
+        });
         return self::get($uuid);
     }
 
     public static function submit_outcome(int $actor_id, string $followup_uuid, array $response, int $expected_version): array {
         $followup = self::get($followup_uuid);
+        CF01_Authorization::actor($actor_id, 'submit_patient_outcome', array(
+            'patient_uuid' => (string) $followup['patient_uuid'],
+            'followup_uuid' => $followup_uuid,
+            'purpose' => 'clinical_care',
+        ));
         if (!CF01_Authorization::patient_owner($actor_id, (string) $followup['patient_uuid'])) {
-            CF01_Authorization::actor($actor_id, 'submit_patient_outcome');
+            CF01_Role_Context::resolve($actor_id, (string) $followup['patient_uuid'], 'clinical_care', 'guardian');
         }
         CF01_Authorization::expected_version($followup, $expected_version);
         if (!in_array((string) $followup['status'], array('due', 'overdue'), true)) {
@@ -104,7 +122,7 @@ final class CF01_Followups {
     public static function review(int $actor_id, string $outcome_uuid, array $review, int $expected_outcome_version): array {
         $outcome = self::outcome($outcome_uuid);
         $followup = self::get((string) $outcome['followup_uuid']);
-        CF01_Authorization::clinician($actor_id, 'review_followup');
+        $context = CF01_Authorization::clinician($actor_id, 'review_followup');
         $prescription = CF01_Prescriptions::get((string) $followup['prescription_uuid']);
         $encounter = CF01_Encounters::get((string) $prescription['encounter_uuid']);
         CF01_Authorization::relationship_for_record((string) $outcome['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'review_followup');
@@ -122,12 +140,36 @@ final class CF01_Followups {
         if ($normalized['assessment'] === '') {
             throw new InvalidArgumentException('Clinical follow-up assessment is required.');
         }
-        CF01_DB::transaction(function () use ($actor_id, $outcome_uuid, $normalized, $expected_outcome_version, $followup): void {
+        if ($normalized['next_plan'] === '') {
+            throw new InvalidArgumentException('A clinician-entered next plan is required before follow-up review can be finalized.');
+        }
+        $reviewed_at = CF01_DB::now();
+        $professional_uuid = sanitize_text_field((string) ($context['professional']['professional_uuid'] ?? ''));
+        if ($professional_uuid === '') {
+            throw new RuntimeException('Current professional identity is required to sign the follow-up next plan.');
+        }
+        $snapshot = array(
+            'outcome_uuid' => $outcome_uuid,
+            'followup_uuid' => (string) $followup['followup_uuid'],
+            'patient_uuid' => (string) $outcome['patient_uuid'],
+            'signer_user_id' => $actor_id,
+            'professional_uuid' => $professional_uuid,
+            'assessment_hash' => hash('sha256', CF01_Crypto::canonical_json($normalized['assessment'])),
+            'next_plan_hash' => hash('sha256', CF01_Crypto::canonical_json($normalized['next_plan'])),
+            'row_version' => $expected_outcome_version,
+            'signed_at' => $reviewed_at,
+            'contract_version' => CF01_CONTRACT_VERSION,
+        );
+        $normalized['signed_next_plan'] = array(
+            'snapshot' => $snapshot,
+            'signature' => CF01_Crypto::sign($snapshot, 'followup-review-signature'),
+        );
+        CF01_DB::transaction(function () use ($actor_id, $outcome_uuid, $normalized, $expected_outcome_version, $followup, $reviewed_at): void {
             $ok = CF01_DB::update_versioned('outcomes', array(
                 'review_status' => 'reviewed',
                 'review_cipher' => CF01_Crypto::encrypt($normalized, 'outcome-review'),
                 'reviewed_by_user_id' => $actor_id,
-                'reviewed_at' => CF01_DB::now(),
+                'reviewed_at' => $reviewed_at,
             ), array('outcome_uuid' => $outcome_uuid), $expected_outcome_version);
             if (!$ok) {
                 throw new RuntimeException('Outcome changed concurrently.');
@@ -137,12 +179,12 @@ final class CF01_Followups {
             $followup_ok = CF01_DB::update_versioned('followups', array(
                 'status' => $next,
                 'reviewed_by_user_id' => $actor_id,
-                'reviewed_at' => CF01_DB::now(),
+                'reviewed_at' => $reviewed_at,
             ), array('followup_uuid' => $followup['followup_uuid']), $followup_version);
             if (!$followup_ok) {
                 throw new RuntimeException('Follow-up changed concurrently.');
             }
-            CF01_Audit::record($actor_id, 'FollowUpReviewed', 'patient_reported_outcome', $outcome_uuid, 'clinical_care', array('status' => $next));
+            CF01_Audit::record($actor_id, 'FollowUpReviewed', 'patient_reported_outcome', $outcome_uuid, 'clinical_care', array('status' => $next, 'signed_next_plan' => true));
             CF01_Outbox::enqueue('FollowUpReviewed', array('outcome_uuid' => $outcome_uuid, 'followup_uuid' => $followup['followup_uuid'], 'status' => $next), $outcome_uuid);
         });
         return self::outcome($outcome_uuid);
@@ -262,7 +304,7 @@ final class CF01_Followups {
     }
 
     private static function normalize_response(array $response): array {
-        $allowed = array('answers', 'adherence', 'changes', 'aggravation', 'new_symptoms', 'adverse_events', 'red_flags', 'patient_note', 'submitted_at');
+        $allowed = array('answers', 'adherence', 'changes', 'aggravation', 'new_symptoms', 'adverse_events', 'unexpected_events', 'red_flags', 'patient_note', 'submitted_at');
         $normalized = array();
         foreach ($allowed as $field) {
             if (array_key_exists($field, $response)) {
