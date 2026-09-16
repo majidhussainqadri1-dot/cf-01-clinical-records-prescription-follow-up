@@ -30,16 +30,25 @@ Status: corrected at source level; no staging/live claim.
 
 ## Round 5 — exact-head CI, test-inventory and regression-gate review
 Audit completed before correction. The entire failing exact-head workflow was inspected across PHP, Python, 40-round and policy/package jobs before any fix was applied.
+Defects found: stale plugin/combined PHP inventory counts and a stale pre-amendment green-color assertion caused the exact-head workflow families to fail even though the new Future24 Python regression tests themselves passed.
+Correction batch: updated plugin inventory to 26, combined permanent PHP inventory to 37 and the visual regression gate to current Sabri Green `#087A4E`; no substantive gate was bypassed.
+Status: exact-head GitHub Actions run `35051481951` completed successfully after the correction batch; no staging/live claim.
+
+## Round 6 — exact-release activation, governance evidence and state-transition review
+Audit completed before correction.
 
 Defects found:
-1. `tests/fresh-review.php` still froze the pre-Future24 plugin PHP inventory at 24 files although two governed Future24 PHP files had been added.
-2. `tools/validate_runtime.py` still froze the combined permanent PHP inventory at 35 rather than 37.
-3. `tests/three-plan-corrections.php` still asserted the superseded green fallback `#0b6b3a`, contradicting the current Sabri Green `#087A4E` requirement.
-4. Because these regression gates were stale, all exact-head workflow families failed or stopped early even though the newly added Future24 Python regression tests themselves passed.
+1. `cf01_future24_governance_evidence` was only a set of unbound booleans; it was not cryptographically/structurally bound to the current accepted core activation generation, activation fingerprint, repository HEAD, package checksum, environment or runtime/schema/contract versions.
+2. Future24 feature-state and governance-evidence options had no dedicated pre-update transition guards, so stale or replacement evidence could be written without a source-level state-transition policy.
+3. The core activation receipt retained only fingerprint/time/generation, preventing direct Future24 exact-head/package traceability even though the source activation evidence itself had validated those values.
+4. Evidence records did not require immutable hashes for Founder, privacy, clinical-safety, security, staging and rollback acceptance; data-governance-sensitive features 020–023 likewise lacked a required evidence hash.
 
-Correction batch after Round 5 audit:
-- Updated the plugin PHP inventory gate to 26 and the combined permanent PHP inventory gate to 37.
-- Updated the three-plan visual regression gate to require current Sabri Green `#087A4E` case-insensitively.
-- Preserved all substantive clinical/security/runtime gates; no failing test was removed or bypassed.
+Correction batch after Round 6 audit:
+- Added `CF01_Future24_Governance` with fail-closed pre-update guards for feature states and governance evidence.
+- Bound every usable Future24 evidence record to the active core activation fingerprint/generation, exact HEAD, package SHA-256, environment and current runtime/schema/contract versions.
+- Enriched the accepted activation receipt with exact release identity after the already-validated core activation transition.
+- Required SHA-256 evidence hashes for Founder/privacy/clinical-safety/security/staging/rollback gates and an additional data-governance hash for Future24 020–023.
+- Made governance evidence immutable while any governed feature is `shadow` or `enabled`, and prohibited silent removal of active states.
+- Added permanent exact-activation regression tests and updated inventory gates for the new governance class.
 
-Status after correction: source/test-gate defects corrected; exact-head CI re-verification is required before Round 5 can be considered QA-green. No staging/live claim.
+Status after correction: source governance defects corrected; exact-head CI re-verification required. No staging/live claim.
