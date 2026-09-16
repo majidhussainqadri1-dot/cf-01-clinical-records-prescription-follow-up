@@ -8,9 +8,15 @@ final class CF01_Crypto {
     private const LEGACY_RUNTIME_VERSION = '1.0.0';
 
     public static function available(): bool {
-        return self::encryption_key(self::current_key_version()) !== null
-            && function_exists('openssl_encrypt')
-            && function_exists('openssl_decrypt');
+        if (self::encryption_key(self::current_key_version()) === null
+            || !function_exists('openssl_encrypt')
+            || !function_exists('openssl_decrypt')
+            || !function_exists('openssl_get_cipher_methods')
+        ) {
+            return false;
+        }
+        $methods = array_map('strtolower', openssl_get_cipher_methods());
+        return in_array(self::CIPHER, $methods, true);
     }
 
     public static function key(): ?string {
