@@ -15,9 +15,10 @@ final class CF01_Migrations {
             foreach (self::schema($charset) as $sql) {
                 dbDelta($sql);
             }
+            self::verify_schema_inventory();
+            self::record('schema_install', 'completed', array('schema_version' => CF01_SCHEMA_VERSION));
             update_option('cf01_schema_version', CF01_SCHEMA_VERSION, false);
             update_option('cf01_schema_status', 'installed_inactive', false);
-            self::record('schema_install', 'completed', array('schema_version' => CF01_SCHEMA_VERSION));
         });
     }
 
@@ -36,7 +37,8 @@ final class CF01_Migrations {
                 throw new RuntimeException('Activation gate is incomplete: ' . $field);
             }
         }
-        if (get_option('cf01_schema_status') !== 'installed_inactive' && get_option('cf01_schema_status') !== 'installed') {
+        $previous_schema_status = (string) get_option('cf01_schema_status', 'not_installed');
+        if ($previous_schema_status !== 'installed_inactive' && $previous_schema_status !== 'installed') {
             throw new RuntimeException('Clinical schema is not installed and verified.');
         }
         $dependencies = CF01_Contracts::dependency_report();
@@ -56,18 +58,32 @@ final class CF01_Migrations {
         $evidence['visual_contract'] = $visual;
         $evidence['assurance_contract'] = $assurance;
         update_option('cf01_activation_evidence', CF01_Crypto::encrypt($evidence, 'activation-evidence'), false);
-        update_option('cf01_activation_state', 'enabled', false);
-        update_option('cf01_schema_status', 'installed', false);
-        if (!wp_next_scheduled('cf01_process_outbox')) {
-            wp_schedule_event(time() + 60, 'hourly', 'cf01_process_outbox');
+        try {
+            update_option('cf01_activation_state', 'enabled', false);
+            foreach (array(
+                'cf01_process_outbox' => array(60, 'hourly'),
+                'cf01_retention_reconcile' => array(300, 'daily'),
+                'cf01_followup_reconcile' => array(120, 'hourly'),
+            ) as $hook => $schedule) {
+                if (!wp_next_scheduled($hook)) {
+                    $scheduled = wp_schedule_event(time() + $schedule[0], $schedule[1], $hook);
+                    if ($scheduled === false || !wp_next_scheduled($hook)) {
+                        throw new RuntimeException('Mandatory clinical schedule could not be verified: ' . $hook);
+                    }
+                }
+            }
+            CF01_Audit::record($actor_id, 'ClinicalRuntimeActivated', 'clinical_runtime', 'cf01', 'platform_governance', array('version' => CF01_VERSION));
+            update_option('cf01_schema_status', 'installed', false);
+        } catch (Throwable $error) {
+            if (CF01_DB::activation_state() === 'enabled') {
+                update_option('cf01_activation_state', 'disabled', false);
+            }
+            wp_clear_scheduled_hook('cf01_process_outbox');
+            wp_clear_scheduled_hook('cf01_retention_reconcile');
+            wp_clear_scheduled_hook('cf01_followup_reconcile');
+            update_option('cf01_schema_status', $previous_schema_status, false);
+            throw new RuntimeException('Clinical runtime activation failed and was compensated.', 0, $error);
         }
-        if (!wp_next_scheduled('cf01_retention_reconcile')) {
-            wp_schedule_event(time() + 300, 'daily', 'cf01_retention_reconcile');
-        }
-        if (!wp_next_scheduled('cf01_followup_reconcile')) {
-            wp_schedule_event(time() + 120, 'hourly', 'cf01_followup_reconcile');
-        }
-        CF01_Audit::record($actor_id, 'ClinicalRuntimeActivated', 'clinical_runtime', 'cf01', 'platform_governance', array('version' => CF01_VERSION));
     }
 
     public static function disable_runtime(int $actor_id, string $reason): void {
@@ -87,11 +103,13 @@ final class CF01_Migrations {
         if (CF01_DB::is_enabled()) {
             throw new RuntimeException('Legacy extraction must use approved migration mode, not live mutation mode.');
         }
-        $required = array('dry_run', 'source_contract_version', 'reconciliation_plan', 'rollback_plan');
-        foreach ($required as $field) {
+        foreach (array('source_contract_version', 'reconciliation_plan', 'rollback_plan') as $field) {
             if (empty($batch[$field])) {
                 throw new InvalidArgumentException('Migration evidence is incomplete: ' . $field);
             }
+        }
+        if (!array_key_exists('dry_run', $batch) || !is_bool($batch['dry_run'])) {
+            throw new InvalidArgumentException('Migration dry_run must be an explicit boolean.');
         }
         $result = apply_filters('cf01_file08_extraction_batch', null, $batch, $cursor);
         if (!is_array($result) || !isset($result['records'], $result['next_cursor'], $result['complete'])) {
@@ -105,7 +123,7 @@ final class CF01_Migrations {
                 continue;
             }
             $counts['eligible']++;
-            if (empty($batch['dry_run'])) {
+            if (!$batch['dry_run']) {
                 self::write_extracted_record($actor_id, $record);
                 $counts['written']++;
             }
@@ -114,7 +132,7 @@ final class CF01_Migrations {
             'cursor' => $cursor,
             'next_cursor' => sanitize_text_field((string) $result['next_cursor']),
             'complete' => !empty($result['complete']),
-            'dry_run' => !empty($batch['dry_run']),
+            'dry_run' => $batch['dry_run'],
             'counts' => $counts,
             'source_contract_version' => sanitize_text_field((string) $batch['source_contract_version']),
         );
@@ -136,8 +154,6 @@ final class CF01_Migrations {
         }
         return array('passed' => !$diff, 'actual' => $actual, 'differences' => $diff);
     }
-
-
 
     public static function verify_restore(int $actor_id, array $expected): array {
         CF01_Authorization::actor($actor_id, 'run_clinical_rollback');
@@ -167,12 +183,12 @@ final class CF01_Migrations {
             'deleted_record_resurrection' => false,
             'signed_record_integrity' => $integrity,
         );
-        self::record('restore_verification', 'completed', $receipt);
-        CF01_Audit::record($actor_id, 'ClinicalRestoreVerified', 'clinical_runtime', 'cf01', 'resilience', array('integrity_root' => $actual['integrity_root']));
+        CF01_DB::transaction(function () use ($actor_id, $receipt, $actual): void {
+            self::record('restore_verification', 'completed', $receipt);
+            CF01_Audit::record($actor_id, 'ClinicalRestoreVerified', 'clinical_runtime', 'cf01', 'resilience', array('integrity_root' => $actual['integrity_root']));
+        });
         return $receipt;
     }
-
-
 
     private static function verify_signed_records(): array {
         $checked = array('encounters' => 0, 'prescriptions' => 0);
@@ -219,13 +235,21 @@ final class CF01_Migrations {
         if (!is_array($receipt) || empty($receipt['completed']) || empty($receipt['reconciled'])) {
             throw new RuntimeException('Verified rollback and reconciliation receipt is required.');
         }
-        CF01_DB::update_versioned('migrations', array(
-            'status' => 'rolled_back',
-            'rollback_cipher' => CF01_Crypto::encrypt(array('reason' => $reason, 'receipt' => $receipt), 'migration-rollback'),
-            'completed_at' => CF01_DB::now(),
-        ), array('migration_uuid' => $migration_uuid), (int) $migration['row_version']);
-        CF01_Audit::record($actor_id, 'ClinicalMigrationRolledBack', 'migration', $migration_uuid, 'migration', array());
-        return $receipt;
+        if (!empty($receipt['orchestrator_committed'])) {
+            return $receipt;
+        }
+        return CF01_DB::transaction(function () use ($actor_id, $migration_uuid, $reason, $migration, $receipt): array {
+            $updated = CF01_DB::update_versioned('migrations', array(
+                'status' => 'rolled_back',
+                'rollback_cipher' => CF01_Crypto::encrypt(array('reason' => $reason, 'receipt' => $receipt), 'migration-rollback'),
+                'completed_at' => CF01_DB::now(),
+            ), array('migration_uuid' => $migration_uuid), (int) $migration['row_version']);
+            if (!$updated) {
+                throw new RuntimeException('Migration rollback changed concurrently or was already applied.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalMigrationRolledBack', 'migration', $migration_uuid, 'migration', array());
+            return $receipt;
+        });
     }
 
     public static function schema(string $charset): array {
@@ -404,6 +428,23 @@ final class CF01_Migrations {
                 PRIMARY KEY (id), UNIQUE KEY receipt_uuid (receipt_uuid), UNIQUE KEY key_hash (key_hash), KEY command_status (command_name,status)
             ) $charset;",
         );
+    }
+
+    private static function verify_schema_inventory(): void {
+        global $wpdb;
+        if (!method_exists($wpdb, 'get_var')) {
+            throw new RuntimeException('Clinical schema inventory verification is unavailable.');
+        }
+        foreach (array('patients', 'relationships', 'consents', 'encounters', 'observations', 'attachments', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access', 'rights', 'breakglass', 'audit', 'outbox', 'retention', 'migrations', 'commands') as $key) {
+            $table = CF01_DB::table($key);
+            $found = $wpdb->get_var($wpdb->prepare(
+                'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s LIMIT 1',
+                $table
+            ));
+            if (!is_string($found) || !hash_equals($table, $found)) {
+                throw new RuntimeException('Clinical schema installation is incomplete: ' . $key);
+            }
+        }
     }
 
     private static function with_lock(callable $callback): void {
