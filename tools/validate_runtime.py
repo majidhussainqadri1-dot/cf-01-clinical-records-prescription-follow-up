@@ -79,8 +79,8 @@ for number in range(1, 33):
         errors.append(f"{req} must appear exactly once in structured traceability")
 
 php_files = sorted((ROOT / "sabri-clinical-records").rglob("*.php")) + sorted((ROOT / "tests").glob("*.php"))
-if len(php_files) != 35:
-    errors.append(f"Expected 35 permanent PHP files, found {len(php_files)}")
+if len(php_files) != 37:
+    errors.append(f"Expected 37 permanent PHP files, found {len(php_files)}")
 
 plugin_php = sorted((ROOT / 'sabri-clinical-records').rglob('*.php'))
 source = '\n'.join(path.read_text(encoding='utf-8') for path in plugin_php)
