@@ -7,7 +7,6 @@ final class CF01_Attachments {
     public static function attach(int $actor_id, string $patient_uuid, string $encounter_uuid, array $asset): array {
         CF01_Authorization::clinician($actor_id, 'attach_clinical_asset');
         CF01_Authorization::relationship($patient_uuid, $actor_id, 'clinical_care', 'attach_clinical_asset');
-        CF01_Authorization::consent($patient_uuid, 'images');
         $encounter = CF01_Encounters::get($encounter_uuid);
         if ((string) $encounter['patient_uuid'] !== $patient_uuid) {
             throw new RuntimeException('Wrong-patient attachment relation was blocked.');
@@ -18,6 +17,9 @@ final class CF01_Attachments {
                 throw new InvalidArgumentException('Attachment provenance is incomplete.');
             }
         }
+        $declared_type = strtolower(trim((string) $asset['declared_type']));
+        $consent_purpose = self::consent_purpose_for_type($declared_type);
+        CF01_Authorization::consent($patient_uuid, $consent_purpose);
         if (!preg_match('/^[a-f0-9]{64}$/i', (string) $asset['sha256'])) {
             throw new InvalidArgumentException('Attachment checksum is invalid.');
         }
@@ -28,6 +30,7 @@ final class CF01_Attachments {
             'asset_reference' => (string) $asset['asset_reference'],
             'sha256' => strtolower((string) $asset['sha256']),
             'purpose' => 'clinical_attachment',
+            'consent_purpose' => $consent_purpose,
             'patient_uuid' => $patient_uuid,
             'encounter_uuid' => $encounter_uuid,
         ));
@@ -35,23 +38,25 @@ final class CF01_Attachments {
             throw new RuntimeException('Secure clinical media provider did not accept the asset.');
         }
         $uuid = CF01_DB::uuid();
-        CF01_DB::insert('attachments', array(
-            'attachment_uuid' => $uuid,
-            'patient_uuid' => $patient_uuid,
-            'encounter_uuid' => $encounter_uuid,
-            'asset_reference_cipher' => CF01_Crypto::encrypt((string) $asset['asset_reference'], 'attachment-reference'),
-            'sha256' => strtolower((string) $asset['sha256']),
-            'declared_type' => sanitize_text_field((string) $asset['declared_type']),
-            'detected_type' => null,
-            'source_cipher' => CF01_Crypto::encrypt((string) $asset['source'], 'attachment-source'),
-            'scan_status' => 'quarantined',
-            'interpretation_status' => 'unreviewed',
-            'author_user_id' => $actor_id,
-            'row_version' => 1,
-            'created_at' => CF01_DB::now(),
-            'updated_at' => CF01_DB::now(),
-        ));
-        CF01_Audit::record($actor_id, 'ClinicalAttachmentQuarantined', 'clinical_attachment', $uuid, 'images', array('sha256' => strtolower((string) $asset['sha256'])));
+        CF01_DB::transaction(function () use ($actor_id, $patient_uuid, $encounter_uuid, $asset, $declared_type, $consent_purpose, $uuid): void {
+            CF01_DB::insert('attachments', array(
+                'attachment_uuid' => $uuid,
+                'patient_uuid' => $patient_uuid,
+                'encounter_uuid' => $encounter_uuid,
+                'asset_reference_cipher' => CF01_Crypto::encrypt((string) $asset['asset_reference'], 'attachment-reference'),
+                'sha256' => strtolower((string) $asset['sha256']),
+                'declared_type' => sanitize_text_field($declared_type),
+                'detected_type' => null,
+                'source_cipher' => CF01_Crypto::encrypt((string) $asset['source'], 'attachment-source'),
+                'scan_status' => 'quarantined',
+                'interpretation_status' => 'unreviewed',
+                'author_user_id' => $actor_id,
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+            CF01_Audit::record($actor_id, 'ClinicalAttachmentQuarantined', 'clinical_attachment', $uuid, $consent_purpose, array('sha256' => strtolower((string) $asset['sha256'])));
+        });
         return self::get($uuid);
     }
 
@@ -138,5 +143,15 @@ final class CF01_Attachments {
 
     public static function states(): array {
         return self::STATES;
+    }
+
+    private static function consent_purpose_for_type(string $declared_type): string {
+        if (str_starts_with($declared_type, 'image/')) {
+            return 'images';
+        }
+        if (str_starts_with($declared_type, 'audio/') || str_starts_with($declared_type, 'video/')) {
+            return 'recording';
+        }
+        return 'clinical_care';
     }
 }
