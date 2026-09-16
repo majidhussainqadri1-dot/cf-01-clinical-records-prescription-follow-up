@@ -3,6 +3,7 @@ defined('ABSPATH') || exit;
 
 final class CF01_Rights {
     private const TYPES = array('access', 'export', 'correction', 'transfer', 'restriction', 'appeal');
+    private const EXPORT_SCOPES = array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'attachments', 'access_history');
     private const STATES = array(
         'submitted' => array('identity_verification', 'under_review', 'withdrawn'),
         'identity_verification' => array('under_review', 'rejected', 'withdrawn'),
@@ -29,31 +30,34 @@ final class CF01_Rights {
             self::guardian_or_representative($actor_id, $patient_uuid, $request);
         }
         $uuid = CF01_DB::uuid();
-        CF01_DB::insert('rights', array(
-            'case_uuid' => $uuid,
-            'patient_uuid' => $patient_uuid,
-            'request_type' => $type,
-            'status' => 'submitted',
-            'request_cipher' => CF01_Crypto::encrypt(self::sanitize($request), 'rights-request'),
-            'decision_cipher' => null,
-            'requested_by_user_id' => $actor_id,
-            'assigned_user_id' => null,
-            'fulfilled_at' => null,
-            'export_token_hash' => null,
-            'export_token_expires_at' => null,
-            'export_token_consumed_at' => null,
-            'row_version' => 1,
-            'created_at' => CF01_DB::now(),
-            'updated_at' => CF01_DB::now(),
-        ));
-        CF01_Audit::record($actor_id, 'ClinicalRightsRequestSubmitted', 'clinical_rights_case', $uuid, $type, array());
-        CF01_Outbox::enqueue('ClinicalRightsRequestSubmitted', array('case_uuid' => $uuid, 'patient_uuid' => $patient_uuid, 'request_type' => $type), $uuid);
+        CF01_DB::transaction(function () use ($uuid, $patient_uuid, $type, $request, $actor_id): void {
+            CF01_DB::insert('rights', array(
+                'case_uuid' => $uuid,
+                'patient_uuid' => $patient_uuid,
+                'request_type' => $type,
+                'status' => 'submitted',
+                'request_cipher' => CF01_Crypto::encrypt(self::sanitize($request), 'rights-request'),
+                'decision_cipher' => null,
+                'requested_by_user_id' => $actor_id,
+                'assigned_user_id' => null,
+                'fulfilled_at' => null,
+                'export_token_hash' => null,
+                'export_token_expires_at' => null,
+                'export_token_consumed_at' => null,
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+            CF01_Audit::record($actor_id, 'ClinicalRightsRequestSubmitted', 'clinical_rights_case', $uuid, $type, array());
+            CF01_Outbox::enqueue('ClinicalRightsRequestSubmitted', array('case_uuid' => $uuid, 'patient_uuid' => $patient_uuid, 'request_type' => $type), $uuid);
+        });
         return self::get($uuid);
     }
 
     public static function decide(int $actor_id, string $uuid, string $decision, array $details, int $expected_version): array {
         $row = self::get($uuid);
-        CF01_Authorization::actor($actor_id, 'decide_clinical_right');
+        CF01_Authorization::actor($actor_id, 'decide_clinical_right', array('patient_uuid' => $row['patient_uuid'], 'case_uuid' => $uuid));
+        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         CF01_Authorization::expected_version($row, $expected_version);
         if ((int) ($row['requested_by_user_id'] ?? 0) === $actor_id) {
             throw new RuntimeException('A rights requester cannot decide the same request.');
@@ -67,22 +71,42 @@ final class CF01_Rights {
         if (empty($details['reason'])) {
             throw new InvalidArgumentException('A reasoned rights decision is required.');
         }
-        $ok = CF01_DB::update_versioned('rights', array(
-            'status' => $decision,
-            'decision_cipher' => CF01_Crypto::encrypt(self::sanitize($details), 'rights-decision'),
-            'assigned_user_id' => $actor_id,
-        ), array('case_uuid' => $uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Rights case changed concurrently.');
+        if (($row['request_type'] ?? '') === 'export' && $decision === 'partially_approved') {
+            $approved_scope = self::normalize_export_scope((array) ($details['approved_scope'] ?? array()));
+            if (!$approved_scope) {
+                throw new InvalidArgumentException('A partially approved export requires an explicit approved scope.');
+            }
+            $details['approved_scope'] = $approved_scope;
+        } elseif (($row['request_type'] ?? '') === 'export' && isset($details['approved_scope'])) {
+            $details['approved_scope'] = self::normalize_export_scope((array) $details['approved_scope']);
+            if (!$details['approved_scope']) {
+                throw new InvalidArgumentException('Approved export scope is empty or invalid.');
+            }
         }
-        CF01_Audit::record($actor_id, 'ClinicalRightsRequestDecided', 'clinical_rights_case', $uuid, (string) $row['request_type'], array('decision' => $decision));
-        CF01_Outbox::enqueue('ClinicalRightsRequestDecided', array('case_uuid' => $uuid, 'patient_uuid' => $row['patient_uuid'], 'decision' => $decision), $uuid);
+        CF01_DB::transaction(function () use ($actor_id, $uuid, $decision, $details, $expected_version, $row): void {
+            $current = self::get_for_update($uuid);
+            CF01_Authorization::expected_version($current, $expected_version);
+            if (!in_array((string) $current['status'], array('submitted', 'identity_verification', 'under_review', 'more_information', 'appealed'), true)) {
+                throw new RuntimeException('Rights request is not awaiting a decision.');
+            }
+            $ok = CF01_DB::update_versioned('rights', array(
+                'status' => $decision,
+                'decision_cipher' => CF01_Crypto::encrypt(self::sanitize($details), 'rights-decision'),
+                'assigned_user_id' => $actor_id,
+            ), array('case_uuid' => $uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Rights case changed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalRightsRequestDecided', 'clinical_rights_case', $uuid, (string) $row['request_type'], array('decision' => $decision));
+            CF01_Outbox::enqueue('ClinicalRightsRequestDecided', array('case_uuid' => $uuid, 'patient_uuid' => $row['patient_uuid'], 'decision' => $decision), $uuid);
+        });
         return self::get($uuid);
     }
 
     public static function fulfill_export(int $actor_id, string $uuid, string $export_reference, int $expected_version): array {
         $row = self::get($uuid);
-        CF01_Authorization::actor($actor_id, 'fulfill_clinical_export');
+        CF01_Authorization::actor($actor_id, 'fulfill_clinical_export', array('patient_uuid' => $row['patient_uuid'], 'case_uuid' => $uuid));
+        self::require_records_scope($actor_id, (string) $row['patient_uuid']);
         CF01_Authorization::expected_version($row, $expected_version);
         if (($row['request_type'] ?? '') !== 'export' || !in_array((string) $row['status'], array('approved', 'partially_approved'), true)) {
             throw new RuntimeException('Only an approved export request may be fulfilled.');
@@ -104,57 +128,66 @@ final class CF01_Rights {
         }
         $token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         $expires = gmdate('Y-m-d H:i:s', time() + (15 * MINUTE_IN_SECONDS));
-        $ok = CF01_DB::update_versioned('rights', array(
-            'status' => 'fulfilled',
-            'fulfilled_at' => CF01_DB::now(),
-            'export_reference_cipher' => CF01_Crypto::encrypt($export_reference, 'rights-export-reference'),
-            'export_token_hash' => hash('sha256', $token),
-            'export_token_expires_at' => $expires,
-            'export_token_consumed_at' => null,
-        ), array('case_uuid' => $uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Rights case changed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'ClinicalExportPrepared', 'clinical_rights_case', $uuid, 'export', array('expires_at' => $expires));
+        CF01_DB::transaction(function () use ($actor_id, $uuid, $export_reference, $expected_version, $token, $expires): void {
+            $current = self::get_for_update($uuid);
+            CF01_Authorization::expected_version($current, $expected_version);
+            if (($current['request_type'] ?? '') !== 'export' || !in_array((string) $current['status'], array('approved', 'partially_approved'), true)) {
+                throw new RuntimeException('Only an approved export request may be fulfilled.');
+            }
+            $ok = CF01_DB::update_versioned('rights', array(
+                'status' => 'fulfilled',
+                'fulfilled_at' => CF01_DB::now(),
+                'export_reference_cipher' => CF01_Crypto::encrypt($export_reference, 'rights-export-reference'),
+                'export_token_hash' => hash('sha256', $token),
+                'export_token_expires_at' => $expires,
+                'export_token_consumed_at' => null,
+            ), array('case_uuid' => $uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Rights case changed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalExportPrepared', 'clinical_rights_case', $uuid, 'export', array('expires_at' => $expires));
+        });
         return array('case' => self::get($uuid), 'token' => $token, 'expires_at' => $expires);
     }
 
     public static function consume_export(int $actor_id, string $uuid, string $token, int $expected_version): string {
         $row = self::get($uuid);
-        if (!CF01_Authorization::patient_owner($actor_id, (string) $row['patient_uuid'])) {
-            throw new RuntimeException('Export is unavailable.');
-        }
-        CF01_Authorization::actor($actor_id, 'consume_clinical_export');
+        self::authorize_export_recipient($actor_id, $row);
+        CF01_Authorization::actor($actor_id, 'consume_clinical_export', array('patient_uuid' => $row['patient_uuid'], 'case_uuid' => $uuid));
         CF01_Authorization::enforce_rate_limit($actor_id, 'consume_export', (string) $row['patient_uuid'], 10, 15 * MINUTE_IN_SECONDS);
         CF01_Authorization::expected_version($row, $expected_version);
-        if (($row['status'] ?? '') !== 'fulfilled' || empty($row['export_token_hash']) || !hash_equals((string) $row['export_token_hash'], hash('sha256', $token))) {
-            throw new RuntimeException('Export is unavailable.');
-        }
-        if (!empty($row['export_token_consumed_at']) || !CF01_Authorization::not_expired((string) ($row['export_token_expires_at'] ?? ''))) {
-            throw new RuntimeException('Export token expired or was already used.');
-        }
-        $reference = CF01_Crypto::decrypt((string) $row['export_reference_cipher'], 'rights-export-reference');
-        if (!is_string($reference) || $reference === '') {
-            throw new RuntimeException('Export is unavailable.');
-        }
-        $delivery = CF01_Contracts::secure_media('delivery', array(
-            'asset_reference' => $reference,
-            'purpose' => 'clinical_export_download',
-            'actor_user_id' => $actor_id,
-            'patient_uuid' => $row['patient_uuid'],
-            'ttl_seconds' => 300,
-            'single_use' => true,
-            'no_store' => true,
-        ));
-        if (empty($delivery['valid']) || empty($delivery['accepted']) || empty($delivery['delivery_grant'])) {
-            throw new RuntimeException('Export delivery is unavailable.');
-        }
-        $ok = CF01_DB::update_versioned('rights', array('export_token_consumed_at' => CF01_DB::now()), array('case_uuid' => $uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Export token was consumed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'ClinicalExportDownloaded', 'clinical_rights_case', $uuid, 'export', array());
-        return (string) $delivery['delivery_grant'];
+        return CF01_DB::transaction(function () use ($actor_id, $uuid, $token, $expected_version): string {
+            $current = self::get_for_update($uuid);
+            CF01_Authorization::expected_version($current, $expected_version);
+            if (($current['status'] ?? '') !== 'fulfilled' || empty($current['export_token_hash']) || !hash_equals((string) $current['export_token_hash'], hash('sha256', $token))) {
+                throw new RuntimeException('Export is unavailable.');
+            }
+            if (!empty($current['export_token_consumed_at']) || !CF01_Authorization::not_expired((string) ($current['export_token_expires_at'] ?? ''))) {
+                throw new RuntimeException('Export token expired or was already used.');
+            }
+            $reference = CF01_Crypto::decrypt((string) $current['export_reference_cipher'], 'rights-export-reference');
+            if (!is_string($reference) || $reference === '') {
+                throw new RuntimeException('Export is unavailable.');
+            }
+            $delivery = CF01_Contracts::secure_media('delivery', array(
+                'asset_reference' => $reference,
+                'purpose' => 'clinical_export_download',
+                'actor_user_id' => $actor_id,
+                'patient_uuid' => $current['patient_uuid'],
+                'ttl_seconds' => 300,
+                'single_use' => true,
+                'no_store' => true,
+            ));
+            if (empty($delivery['valid']) || empty($delivery['accepted']) || empty($delivery['delivery_grant'])) {
+                throw new RuntimeException('Export delivery is unavailable.');
+            }
+            $ok = CF01_DB::update_versioned('rights', array('export_token_consumed_at' => CF01_DB::now()), array('case_uuid' => $uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Export token was consumed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'ClinicalExportDownloaded', 'clinical_rights_case', $uuid, 'export', array());
+            return (string) $delivery['delivery_grant'];
+        });
     }
 
     public static function correction_addendum(int $actor_id, string $case_uuid, string $encounter_uuid, array $correction, int $expected_version): array {
@@ -168,7 +201,7 @@ final class CF01_Rights {
         if (!hash_equals((string) $case['patient_uuid'], (string) $encounter['patient_uuid'])) {
             throw new RuntimeException('Correction case and encounter patient do not match.');
         }
-        $result = CF01_DB::transaction(function () use ($actor_id, $case_uuid, $encounter_uuid, $correction, $case, $expected_version): array {
+        return CF01_DB::transaction(function () use ($actor_id, $case_uuid, $encounter_uuid, $correction, $case, $expected_version): array {
             $addendum = CF01_Encounters::addendum($actor_id, $encounter_uuid, array(
                 'narrative' => (string) ($correction['narrative'] ?? ''),
                 'provenance' => array('rights_case_uuid' => $case_uuid, 'requested_by_user_id' => $case['requested_by_user_id']),
@@ -180,7 +213,6 @@ final class CF01_Rights {
             CF01_Audit::record($actor_id, 'ClinicalCorrectionFulfilled', 'clinical_rights_case', $case_uuid, 'correction', array('addendum_uuid' => $addendum['encounter_uuid']));
             return $addendum;
         });
-        return $result;
     }
 
     public static function export_manifest(int $actor_id, string $patient_uuid, array $scope): array {
@@ -194,22 +226,29 @@ final class CF01_Rights {
 
     public static function export_manifest_for_case(int $actor_id, string $case_uuid, array $scope): array {
         $case = self::get($case_uuid);
-        CF01_Authorization::actor($actor_id, 'fulfill_clinical_export');
+        CF01_Authorization::actor($actor_id, 'fulfill_clinical_export', array('patient_uuid' => $case['patient_uuid'], 'case_uuid' => $case_uuid));
+        self::require_records_scope($actor_id, (string) $case['patient_uuid']);
         if (($case['request_type'] ?? '') !== 'export' || !in_array((string) $case['status'], array('approved', 'partially_approved'), true)) {
             throw new RuntimeException('An approved export case is required.');
         }
         if ((int) ($case['requested_by_user_id'] ?? 0) === $actor_id || (int) ($case['assigned_user_id'] ?? 0) === $actor_id) {
             throw new RuntimeException('Export review and generation require separated duties.');
         }
-        $manifest = self::build_export_manifest((string) $case['patient_uuid'], $scope, 'approved_rights_case');
+        $requested_scope = self::normalize_export_scope($scope);
+        $approved_scope = self::approved_export_scope($case);
+        if (!$requested_scope || array_diff($requested_scope, $approved_scope)) {
+            throw new RuntimeException('Requested export scope exceeds the approved rights decision.');
+        }
+        $manifest = self::build_export_manifest((string) $case['patient_uuid'], $requested_scope, 'approved_rights_case');
         $manifest['case_uuid'] = $case_uuid;
         $manifest['decision_version'] = (int) $case['row_version'];
+        $manifest['approved_scope'] = $approved_scope;
         $manifest['manifest_hash'] = hash('sha256', CF01_Crypto::canonical_json(array_diff_key($manifest, array('manifest_hash' => true))));
         return $manifest;
     }
 
     private static function build_export_manifest(string $patient_uuid, array $scope, string $authority): array {
-        $allowed = array_values(array_unique(array_intersect(array_map('sanitize_key', $scope), array('demographics', 'consents', 'encounters', 'observations', 'assessments', 'prescriptions', 'followups', 'outcomes', 'attachments', 'access_history'))));
+        $allowed = self::normalize_export_scope($scope);
         if (!$allowed) {
             throw new InvalidArgumentException('At least one export scope is required.');
         }
@@ -291,9 +330,10 @@ final class CF01_Rights {
     public static function access_history(int $actor_id, string $patient_uuid, int $limit = 50, string $before = ''): array {
         CF01_Patients::get($patient_uuid);
         if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
-            CF01_Authorization::actor($actor_id, 'view_own_access_history');
+            CF01_Authorization::actor($actor_id, 'view_own_access_history', array('patient_uuid' => $patient_uuid));
         } else {
-            CF01_Authorization::actor($actor_id, 'view_access_history');
+            CF01_Authorization::actor($actor_id, 'view_access_history', array('patient_uuid' => $patient_uuid));
+            self::require_records_scope($actor_id, $patient_uuid);
         }
         $limit = max(1, min(100, $limit));
         $sql = 'SELECT event_uuid, actor_pseudonym, action, object_type, purpose, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s';
@@ -318,12 +358,71 @@ final class CF01_Rights {
         return self::STATES;
     }
 
+    private static function get_for_update(string $uuid): array {
+        $row = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('rights') . ' WHERE case_uuid = %s LIMIT 1 FOR UPDATE', array($uuid));
+        if (!$row) {
+            throw new RuntimeException('Clinical rights case is unavailable.');
+        }
+        return $row;
+    }
+
     private static function guardian_or_representative(int $actor_id, string $patient_uuid, array $request): void {
         $context = CF01_Role_Context::resolve($actor_id, $patient_uuid, 'clinical_rights', 'guardian');
         $reference = (string) ($request['representative_reference'] ?? '');
         if ($reference !== '' && !empty($context['guardian_reference']) && !hash_equals((string) $context['guardian_reference'], $reference)) {
             throw new RuntimeException('Representative evidence does not match current verified authority.');
         }
+    }
+
+    private static function require_records_scope(int $actor_id, string $patient_uuid): array {
+        return CF01_Role_Context::resolve($actor_id, $patient_uuid, 'clinical_rights', 'records');
+    }
+
+    private static function authorize_export_recipient(int $actor_id, array $case): void {
+        $patient_uuid = (string) $case['patient_uuid'];
+        if (CF01_Authorization::patient_owner($actor_id, $patient_uuid)) {
+            return;
+        }
+        if ((int) ($case['requested_by_user_id'] ?? 0) !== $actor_id) {
+            throw new RuntimeException('Export is unavailable.');
+        }
+        CF01_Role_Context::resolve($actor_id, $patient_uuid, 'clinical_rights', 'guardian');
+    }
+
+    private static function approved_export_scope(array $case): array {
+        $decision = !empty($case['decision_cipher'])
+            ? CF01_Crypto::decrypt((string) $case['decision_cipher'], 'rights-decision')
+            : array();
+        if (is_array($decision) && !empty($decision['approved_scope']) && is_array($decision['approved_scope'])) {
+            return self::normalize_export_scope($decision['approved_scope']);
+        }
+        if (($case['status'] ?? '') === 'partially_approved') {
+            throw new RuntimeException('Partially approved export is missing its bounded approved scope.');
+        }
+        $request = CF01_Crypto::decrypt((string) $case['request_cipher'], 'rights-request');
+        if (!is_array($request)) {
+            throw new RuntimeException('Export request scope evidence is unavailable.');
+        }
+        if (isset($request['scope']) && is_array($request['scope'])) {
+            $scope = self::normalize_export_scope($request['scope']);
+            if ($scope) {
+                return $scope;
+            }
+        }
+        if (($request['scope'] ?? '') === 'own_record') {
+            return self::EXPORT_SCOPES;
+        }
+        if (isset($request['fields']) && is_array($request['fields'])) {
+            $scope = self::normalize_export_scope($request['fields']);
+            if ($scope) {
+                return $scope;
+            }
+        }
+        throw new RuntimeException('Approved export is missing bounded scope evidence.');
+    }
+
+    private static function normalize_export_scope(array $scope): array {
+        return array_values(array_unique(array_intersect(array_map('sanitize_key', $scope), self::EXPORT_SCOPES)));
     }
 
     private static function sanitize($value) {
