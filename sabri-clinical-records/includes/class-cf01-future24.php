@@ -166,7 +166,17 @@ final class CF01_Future24 {
             self::require_enabled('CF01-FUT-016');
             $followup = trim((string) $request['followup']);
             $result = self::provider('CF01-FUT-016', 'patient_reported_outcomes', array('actor_user_id' => get_current_user_id(), 'followup_uuid' => $followup));
-            return is_wp_error($result) ? $result : rest_ensure_response($result + array('automatic_treatment_change' => false));
+            if (is_wp_error($result)) {
+                return $result;
+            }
+            // The Future24 projection is advisory clinical context only. A provider
+            // may not turn a patient-reported outcome into an automatic treatment
+            // mutation, and the response must preserve its patient-reported origin
+            // and clinician-review boundary from the governing plan.
+            $result['patient_reported'] = true;
+            $result['clinician_review_required'] = true;
+            $result['automatic_treatment_change'] = false;
+            return rest_ensure_response($result);
         });
     }
 
