@@ -1,12 +1,14 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Route-level authorization perimeter for Future24. */
+/** Route-level authorization, abuse and replay perimeter for Future24. */
 final class CF01_Future24_Guard {
     private const PREFIX = '/clinical/v1/future/';
+    private const MAX_BODY_BYTES = 262144;
 
     public static function register(): void {
         add_filter('rest_request_before_callbacks', array(__CLASS__, 'before_callbacks'), 8, 3);
+        add_filter('rest_request_after_callbacks', array(__CLASS__, 'after_callbacks'), PHP_INT_MAX, 3);
         CF01_Future24_Response_Guard::register();
     }
 
@@ -24,15 +26,54 @@ final class CF01_Future24_Guard {
         }
         try {
             self::core_gate($route);
-            self::mutation_transport_gate($request);
+            self::request_size_gate($request);
+            self::rate_limit($route, $request);
             self::route_authorization($route, $request);
-            return $response;
+            self::mutation_transport_gate($request);
+            $replay = self::reserve_mutation($route, $request);
+            return $replay ?? $response;
         } catch (InvalidArgumentException $error) {
             return self::error('cf01_future24_invalid_request', $error->getMessage(), 400);
         } catch (RuntimeException $error) {
             return self::error('cf01_future24_forbidden', $error->getMessage(), 403);
         } catch (Throwable $error) {
             return self::error('cf01_future24_guard_failed', 'Future clinical authorization failed closed.', 503);
+        }
+    }
+
+    public static function after_callbacks($response, array $handler, WP_REST_Request $request) {
+        unset($handler);
+        $route = '/' . ltrim((string) $request->get_route(), '/');
+        if (!str_starts_with($route, self::PREFIX) || strtoupper((string) $request->get_method()) === 'GET') {
+            return $response;
+        }
+        $receipt_uuid = trim((string) $request->get_param('_cf01_future24_receipt_uuid'));
+        if ($receipt_uuid === '') {
+            return $response;
+        }
+        try {
+            if (is_wp_error($response)) {
+                self::fail_receipt($receipt_uuid, sanitize_key((string) $response->get_error_code()));
+                return $response;
+            }
+            $rest = rest_ensure_response($response);
+            $status = (int) $rest->get_status();
+            if ($status < 200 || $status >= 300) {
+                self::fail_receipt($receipt_uuid, 'http_' . $status);
+                return $response;
+            }
+            $stored = array('status' => $status, 'data' => $rest->get_data());
+            if (!CF01_DB::update_versioned('commands', array(
+                'status' => 'completed',
+                'response_cipher' => CF01_Crypto::encrypt($stored, 'command-response'),
+                'error_code' => null,
+            ), array('receipt_uuid' => $receipt_uuid), 1)) {
+                throw new RuntimeException('Future24 idempotency receipt changed concurrently.');
+            }
+            return $response;
+        } catch (Throwable $error) {
+            do_action('cf01_exception', $error, CF01_DB::uuid());
+            return self::error('cf01_future24_receipt_failed', 'Future clinical mutation requires reconciliation before retry.', 503);
         }
     }
 
@@ -49,13 +90,96 @@ final class CF01_Future24_Guard {
         throw new RuntimeException('Clinical records are disabled pending activation acceptance.');
     }
 
+    private static function request_size_gate(WP_REST_Request $request): void {
+        if (strlen((string) $request->get_body()) > self::MAX_BODY_BYTES) {
+            throw new InvalidArgumentException('The protected Future24 request is too large.');
+        }
+    }
+
+    private static function rate_limit(string $route, WP_REST_Request $request): void {
+        $mutation = strtoupper((string) $request->get_method()) !== 'GET';
+        $operation = 'future24_' . substr(hash('sha256', $route), 0, 20);
+        $subject = substr(hash('sha256', get_current_user_id() . '|' . $route), 0, 32);
+        CF01_Authorization::enforce_rate_limit(get_current_user_id(), $operation, $subject, $mutation ? 60 : 240, 60);
+    }
+
     private static function mutation_transport_gate(WP_REST_Request $request): void {
         if (strtoupper((string) $request->get_method()) === 'GET') {
             return;
         }
         $key = trim((string) $request->get_header('Idempotency-Key'));
-        if ($key === '' || strlen($key) < 16 || strlen($key) > 200) {
+        if (!preg_match('/^[A-Za-z0-9._:-]{16,128}$/', $key)) {
             throw new InvalidArgumentException('A bounded Idempotency-Key is required for Future24 mutations.');
+        }
+    }
+
+    private static function reserve_mutation(string $route, WP_REST_Request $request): ?WP_REST_Response {
+        if (strtoupper((string) $request->get_method()) === 'GET') {
+            return null;
+        }
+        $actor = get_current_user_id();
+        $key = trim((string) $request->get_header('Idempotency-Key'));
+        $command = 'future24_' . substr(hash('sha256', $route), 0, 24);
+        $key_hash = CF01_Crypto::blind_index($actor . '|' . $command . '|' . $key, 'command-idempotency');
+        $request_hash = hash('sha256', CF01_Crypto::canonical_json(array(
+            'method' => strtoupper((string) $request->get_method()),
+            'route' => $route,
+            'url' => $request->get_url_params(),
+            'query' => $request->get_query_params(),
+            'body' => self::json($request),
+        )));
+        $existing = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('commands') . ' WHERE key_hash = %s LIMIT 1', array($key_hash));
+        if ($existing) {
+            if (!hash_equals((string) $existing['request_hash'], $request_hash)) {
+                throw new RuntimeException('Idempotency key was reused with a different Future24 request.');
+            }
+            if (($existing['status'] ?? '') === 'completed' && !empty($existing['response_cipher'])) {
+                $stored = CF01_Crypto::decrypt((string) $existing['response_cipher'], 'command-response');
+                if (!is_array($stored) || !array_key_exists('data', $stored)) {
+                    throw new RuntimeException('Stored Future24 idempotency result is invalid.');
+                }
+                return new WP_REST_Response($stored['data'], max(200, min(299, (int) ($stored['status'] ?? 200))));
+            }
+            throw new RuntimeException('The Future24 idempotent command is already processing, failed or requires reconciliation.');
+        }
+
+        $receipt_uuid = CF01_DB::uuid();
+        try {
+            CF01_DB::insert('commands', array(
+                'receipt_uuid' => $receipt_uuid,
+                'actor_pseudonym' => hash_hmac('sha256', (string) $actor, CF01_Crypto::key() ?? str_repeat("\0", 32)),
+                'command_name' => sanitize_key($command),
+                'key_hash' => $key_hash,
+                'request_hash' => $request_hash,
+                'status' => 'processing',
+                'response_cipher' => null,
+                'error_code' => null,
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+        } catch (Throwable $error) {
+            $raced = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('commands') . ' WHERE key_hash = %s LIMIT 1', array($key_hash));
+            if ($raced && hash_equals((string) $raced['request_hash'], $request_hash) && ($raced['status'] ?? '') === 'completed' && !empty($raced['response_cipher'])) {
+                $stored = CF01_Crypto::decrypt((string) $raced['response_cipher'], 'command-response');
+                if (is_array($stored) && array_key_exists('data', $stored)) {
+                    return new WP_REST_Response($stored['data'], max(200, min(299, (int) ($stored['status'] ?? 200))));
+                }
+            }
+            throw $error;
+        }
+        $request->set_param('_cf01_future24_receipt_uuid', $receipt_uuid);
+        return null;
+    }
+
+    private static function fail_receipt(string $receipt_uuid, string $error_code): void {
+        try {
+            CF01_DB::update_versioned('commands', array(
+                'status' => 'failed',
+                'error_code' => sanitize_key($error_code ?: 'command_failed'),
+            ), array('receipt_uuid' => $receipt_uuid), 1);
+        } catch (Throwable $ignored) {
+            // Reconciliation has precedence over unsafe automatic replay.
         }
     }
 
@@ -96,6 +220,7 @@ final class CF01_Future24_Guard {
             self::require_capability($user_id, 'cf01_manage_clinical_records');
             self::require_capability($user_id, 'cf01_manage_clinical_keys');
             self::recent_auth($user_id, 'future24_institutional_webhook');
+            self::verify_institutional_signature($request);
             if (!(bool) apply_filters('cf01_future24_institutional_authorized', false, $user_id, $request)) {
                 throw new RuntimeException('An accepted institutional integration authorization is required.');
             }
@@ -116,6 +241,42 @@ final class CF01_Future24_Guard {
             return;
         }
         throw new RuntimeException('Future clinical route is not covered by an explicit authorization rule.');
+    }
+
+    private static function verify_institutional_signature(WP_REST_Request $request): void {
+        $timestamp = trim((string) $request->get_header('X-CF01-Webhook-Timestamp'));
+        $nonce = trim((string) $request->get_header('X-CF01-Webhook-Nonce'));
+        $signature = trim((string) $request->get_header('X-CF01-Webhook-Signature'));
+        $idempotency = trim((string) $request->get_header('Idempotency-Key'));
+        if (!ctype_digit($timestamp) || abs(time() - (int) $timestamp) > 300) {
+            throw new RuntimeException('Institutional webhook timestamp is missing or outside the accepted replay window.');
+        }
+        if (!preg_match('/^[A-Za-z0-9._:-]{16,128}$/', $nonce) || !hash_equals($nonce, $idempotency)) {
+            throw new RuntimeException('Institutional webhook nonce must be bounded and identical to the idempotency key.');
+        }
+        if (strlen($signature) < 32 || strlen($signature) > 512) {
+            throw new RuntimeException('Institutional webhook signature is missing or malformed.');
+        }
+        $body_hash = hash('sha256', (string) $request->get_body());
+        $verification = apply_filters('cf01_future24_institutional_signature_verification', null, array(
+            'actor_user_id' => get_current_user_id(),
+            'timestamp' => (int) $timestamp,
+            'nonce' => $nonce,
+            'signature' => $signature,
+            'body_sha256' => $body_hash,
+            'event' => sanitize_key((string) $request['event']),
+            'contract_version' => CF01_CONTRACT_VERSION,
+        ), $request);
+        if (!is_array($verification)
+            || ($verification['valid'] ?? false) !== true
+            || !hash_equals($body_hash, strtolower(trim((string) ($verification['body_sha256'] ?? ''))))
+            || !hash_equals($nonce, (string) ($verification['nonce'] ?? ''))
+            || (int) ($verification['timestamp'] ?? 0) !== (int) $timestamp
+            || trim((string) ($verification['key_id'] ?? '')) === ''
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($verification['contract_version'] ?? ''))
+        ) {
+            throw new RuntimeException('Institutional webhook signature verification failed closed.');
+        }
     }
 
     private static function route_patient_uuid(WP_REST_Request $request): string {
@@ -158,11 +319,7 @@ final class CF01_Future24_Guard {
     }
 }
 
-/**
- * Last-line response validator for Future24 provider adapters.
- * Providers remain replaceable, but no adapter may emit ungoverned/raw data or
- * autonomous clinical/financial-priority signals through this foundation.
- */
+/** Last-line provider response validator for Future24 adapters. */
 final class CF01_Future24_Response_Guard {
     private const GLOBAL_FORBIDDEN = array(
         'password', 'otp', 'cvv', 'pan', 'private_key', 'provider_secret', 'raw_token',
@@ -195,8 +352,8 @@ final class CF01_Future24_Response_Guard {
             || ($meta['authorization_checked'] ?? false) !== true
             || ($meta['minimum_necessary'] ?? false) !== true
             || sanitize_key((string) ($meta['canonical_owner'] ?? '')) !== 'cf01'
-            || trim((string) ($meta['contract_version'] ?? '')) === '') {
-            return self::error('cf01_future24_provider_contract_missing', 'Future clinical provider response lacks required governance assertions.', 502);
+            || !hash_equals(CF01_CONTRACT_VERSION, (string) ($meta['contract_version'] ?? ''))) {
+            return self::error('cf01_future24_provider_contract_missing', 'Future clinical provider response lacks current governance assertions.', 502);
         }
         if (self::contains_nonempty_key($result, self::GLOBAL_FORBIDDEN)) {
             return self::error('cf01_future24_sensitive_payload_rejected', 'Future clinical provider attempted to expose a forbidden sensitive payload.', 422);
