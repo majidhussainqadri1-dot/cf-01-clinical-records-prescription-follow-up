@@ -34,23 +34,25 @@ final class CF01_Relationships {
         }
         $source_reference = sanitize_text_field((string) $source['source_reference']);
         $relationship_uuid = CF01_DB::uuid();
-        CF01_DB::insert('relationships', array(
-            'relationship_uuid' => $relationship_uuid,
-            'patient_uuid' => $patient_uuid,
-            'doctor_user_id' => $doctor_user_id,
-            'clinic_reference' => sanitize_text_field((string) ($data['clinic_reference'] ?? '')),
-            'source_reference' => $source_reference,
-            'purpose' => $purpose,
-            'scope_json' => wp_json_encode($scope),
-            'status' => 'proposed',
-            'starts_at' => null,
-            'ends_at' => null,
-            'authorized_by' => $actor_id,
-            'row_version' => 1,
-            'created_at' => CF01_DB::now(),
-            'updated_at' => CF01_DB::now(),
-        ));
-        CF01_Audit::record($actor_id, 'CareRelationshipProposed', 'care_relationship', $relationship_uuid, $purpose, array());
+        CF01_DB::transaction(function () use ($relationship_uuid, $patient_uuid, $doctor_user_id, $data, $source_reference, $purpose, $scope, $actor_id): void {
+            CF01_DB::insert('relationships', array(
+                'relationship_uuid' => $relationship_uuid,
+                'patient_uuid' => $patient_uuid,
+                'doctor_user_id' => $doctor_user_id,
+                'clinic_reference' => sanitize_text_field((string) ($data['clinic_reference'] ?? '')),
+                'source_reference' => $source_reference,
+                'purpose' => $purpose,
+                'scope_json' => wp_json_encode($scope),
+                'status' => 'proposed',
+                'starts_at' => null,
+                'ends_at' => null,
+                'authorized_by' => $actor_id,
+                'row_version' => 1,
+                'created_at' => CF01_DB::now(),
+                'updated_at' => CF01_DB::now(),
+            ));
+            CF01_Audit::record($actor_id, 'CareRelationshipProposed', 'care_relationship', $relationship_uuid, $purpose, array());
+        });
         return self::get($relationship_uuid);
     }
 
@@ -59,6 +61,7 @@ final class CF01_Relationships {
         self::authorize_relationship_actor($actor_id, $row, 'activate_relationship');
         CF01_Authorization::expected_version($row, $expected_version);
         self::require_target_practitioner((int) $row['doctor_user_id'], 'activate_relationship', (string) $row['purpose']);
+        self::require_current_source($actor_id, $row);
         CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
 
         CF01_DB::transaction(function () use ($actor_id, $relationship_uuid, $row, $expected_version): void {
@@ -105,6 +108,7 @@ final class CF01_Relationships {
         }
         if ($next === 'active') {
             self::require_target_practitioner((int) $row['doctor_user_id'], 'reactivate_relationship', (string) $row['purpose']);
+            self::require_current_source($actor_id, $row);
             CF01_Authorization::consent((string) $row['patient_uuid'], (string) $row['purpose']);
         }
 
@@ -133,26 +137,31 @@ final class CF01_Relationships {
             });
         }
 
-        $data = array(
-            'status' => $next,
-            'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
-            'authorized_by' => $actor_id,
-        );
-        if ($next === 'active') {
-            $data['starts_at'] = CF01_DB::now();
-            $data['ends_at'] = null;
-        }
-        $ok = CF01_DB::update_versioned('relationships', $data, array('relationship_uuid' => $relationship_uuid), $expected_version);
-        if (!$ok) {
-            throw new RuntimeException('Relationship changed concurrently.');
-        }
-        CF01_Audit::record($actor_id, 'CareRelationshipStatusChanged', 'care_relationship', $relationship_uuid, (string) $row['purpose'], array('status' => $next));
-        CF01_Outbox::enqueue('CareRelationshipStatusChanged', array(
-            'relationship_uuid' => $relationship_uuid,
-            'patient_uuid' => (string) $row['patient_uuid'],
-            'status' => $next,
-        ), $relationship_uuid);
-        return self::get($relationship_uuid);
+        return CF01_DB::transaction(function () use ($actor_id, $relationship_uuid, $row, $next, $reason, $expected_version): array {
+            $current = self::get_for_update($relationship_uuid);
+            CF01_Authorization::expected_version($current, $expected_version);
+            self::transition_allowed((string) $current['status'], $next);
+            $data = array(
+                'status' => $next,
+                'reason_cipher' => CF01_Crypto::encrypt($reason, 'relationship-reason'),
+                'authorized_by' => $actor_id,
+            );
+            if ($next === 'active') {
+                $data['starts_at'] = CF01_DB::now();
+                $data['ends_at'] = null;
+            }
+            $ok = CF01_DB::update_versioned('relationships', $data, array('relationship_uuid' => $relationship_uuid), $expected_version);
+            if (!$ok) {
+                throw new RuntimeException('Relationship changed concurrently.');
+            }
+            CF01_Audit::record($actor_id, 'CareRelationshipStatusChanged', 'care_relationship', $relationship_uuid, (string) $row['purpose'], array('status' => $next));
+            CF01_Outbox::enqueue('CareRelationshipStatusChanged', array(
+                'relationship_uuid' => $relationship_uuid,
+                'patient_uuid' => (string) $row['patient_uuid'],
+                'status' => $next,
+            ), $relationship_uuid);
+            return self::get($relationship_uuid);
+        });
     }
 
     public static function get(string $uuid): array {
@@ -271,5 +280,23 @@ final class CF01_Relationships {
             throw new RuntimeException('Assigned doctor professional scope does not authorize this purpose.');
         }
         return $professional;
+    }
+
+    private static function require_current_source(int $actor_id, array $relationship): void {
+        $scope = json_decode((string) ($relationship['scope_json'] ?? ''), true);
+        if (!is_array($scope) || !$scope) {
+            throw new RuntimeException('Treating relationship source scope is unavailable.');
+        }
+        $source = CF01_Contracts::relationship_source(
+            (string) ($relationship['source_reference'] ?? ''),
+            $actor_id,
+            (string) $relationship['patient_uuid'],
+            (int) $relationship['doctor_user_id'],
+            (string) $relationship['purpose'],
+            $scope
+        );
+        if (empty($source['valid'])) {
+            throw new RuntimeException('Current native-owner relationship source assertion is required before access may be activated.');
+        }
     }
 }
