@@ -55,6 +55,7 @@ final class CF01_Prescriptions {
         CF01_Authorization::clinician($actor_id, 'update_prescription');
         $encounter = CF01_Encounters::get((string) $row['encounter_uuid']);
         CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $encounter['relationship_uuid'], 'update_prescription');
+        CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
         CF01_Authorization::expected_version($row, $expected_version);
         self::transition_allowed((string) $row['status'], $next_status);
         if (!in_array($next_status, array('draft', 'ready_to_sign'), true)) {
@@ -195,7 +196,6 @@ final class CF01_Prescriptions {
         return self::STATES;
     }
 
-
     public static function verify_integrity(array $row): bool {
         if (empty($row['signature']) || empty($row['snapshot_cipher']) || ($row['status'] ?? '') === 'draft') {
             return false;
@@ -245,8 +245,6 @@ final class CF01_Prescriptions {
         }
         return $normalized;
     }
-
-
 
     private static function reject_ambiguous_abbreviations(array $order): void {
         $text = strtolower(implode(' ', array_map(static function ($value): string {
