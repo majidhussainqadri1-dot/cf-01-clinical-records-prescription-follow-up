@@ -165,16 +165,31 @@ final class CF01_Authorization {
     }
 
     public static function enforce_rate_limit(int $user_id, string $operation, string $subject_uuid, int $limit, int $window_seconds): void {
+        global $wpdb;
+
         $limit = max(1, $limit);
         $window_seconds = max(60, $window_seconds);
         $bucket = (int) floor(time() / $window_seconds);
-        $key = 'cf01_rl_' . hash('sha256', $user_id . '|' . sanitize_key($operation) . '|' . $subject_uuid . '|' . $bucket);
-        $count = (int) get_transient($key);
-        if ($count >= $limit) {
-            CF01_Audit::denied($user_id, 'ClinicalRateLimitExceeded', 'clinical_subject', $subject_uuid, 'abuse_prevention', sanitize_key($operation));
-            throw new RuntimeException('Clinical action rate limit exceeded; retry after the bounded window.');
+        $operation = sanitize_key($operation);
+        $key = 'cf01_rl_' . hash('sha256', $user_id . '|' . $operation . '|' . $subject_uuid . '|' . $bucket);
+        $lock_name = 'cf01_rl_' . substr(hash('sha256', $key), 0, 48);
+        $acquired = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 1)', $lock_name));
+        if ((string) $acquired !== '1') {
+            throw new RuntimeException('Clinical rate-limit guard is temporarily unavailable.');
         }
-        set_transient($key, $count + 1, $window_seconds + 60);
+
+        try {
+            $count = (int) get_transient($key);
+            if ($count >= $limit) {
+                CF01_Audit::denied($user_id, 'ClinicalRateLimitExceeded', 'clinical_subject', $subject_uuid, 'abuse_prevention', $operation);
+                throw new RuntimeException('Clinical action rate limit exceeded; retry after the bounded window.');
+            }
+            if (!set_transient($key, $count + 1, $window_seconds + 60)) {
+                throw new RuntimeException('Clinical rate-limit state could not be persisted.');
+            }
+        } finally {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
+        }
     }
 
     public static function not_expired(string $utc): bool {
