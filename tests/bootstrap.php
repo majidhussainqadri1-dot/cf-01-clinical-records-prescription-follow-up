@@ -106,6 +106,18 @@ final class CF01_Fake_WPDB {
 
     public function query(string $sql) { return true; }
 
+    public function get_var(string $sql) {
+        if (stripos($sql, 'GET_LOCK(') !== false || stripos($sql, 'RELEASE_LOCK(') !== false) {
+            return 1;
+        }
+        $rows = $this->select($sql);
+        if (!$rows) {
+            return null;
+        }
+        $row = $rows[0];
+        return is_array($row) && $row ? reset($row) : null;
+    }
+
     public function insert(string $table, array $data, $formats = null) {
         $uniqueMap = array(
             'wp_cf01_clinical_patients' => array('clinical_uuid','platform_subject_hash'),
