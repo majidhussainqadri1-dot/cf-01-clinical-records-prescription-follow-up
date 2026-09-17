@@ -70,9 +70,18 @@ final class CF01_Attachments {
         if (empty($scanner_evidence['scanner']) || empty($scanner_evidence['signature']) || empty($scanner_evidence['completed_at'])) {
             throw new InvalidArgumentException('Signed scanner evidence is required.');
         }
+        $detected_type = strtolower(trim((string) ($scanner_evidence['detected_type'] ?? '')));
+        if ($status === 'ready' && $detected_type === '') {
+            throw new InvalidArgumentException('A detected media type is required before a clinical attachment may become ready.');
+        }
+        if ($status === 'ready') {
+            foreach (self::required_consent_purposes((string) $row['declared_type'], $detected_type) as $consent_purpose) {
+                CF01_Authorization::consent((string) $row['patient_uuid'], $consent_purpose);
+            }
+        }
         $ok = CF01_DB::update_versioned('attachments', array(
             'scan_status' => $status,
-            'detected_type' => sanitize_text_field((string) ($scanner_evidence['detected_type'] ?? '')),
+            'detected_type' => sanitize_text_field($detected_type),
             'scanner_evidence_cipher' => CF01_Crypto::encrypt($scanner_evidence, 'scanner-evidence'),
         ), array('attachment_uuid' => $uuid), $expected_version);
         if (!$ok) {
@@ -92,6 +101,10 @@ final class CF01_Attachments {
         if (($row['scan_status'] ?? '') !== 'ready') {
             throw new RuntimeException('Unscanned or quarantined clinical attachment cannot be delivered.');
         }
+        $consent_purposes = self::required_consent_purposes((string) $row['declared_type'], (string) ($row['detected_type'] ?? ''));
+        foreach ($consent_purposes as $consent_purpose) {
+            CF01_Authorization::consent((string) $row['patient_uuid'], $consent_purpose);
+        }
         $reference = CF01_Crypto::decrypt((string) $row['asset_reference_cipher'], 'attachment-reference');
         if (!is_string($reference) || $reference === '') {
             throw new RuntimeException('Secure attachment provider reference is unavailable.');
@@ -99,6 +112,7 @@ final class CF01_Attachments {
         $delivery = CF01_Contracts::secure_media('delivery', array(
             'asset_reference' => $reference,
             'purpose' => 'clinical_attachment_view',
+            'consent_purposes' => $consent_purposes,
             'actor_user_id' => $actor_id,
             'actor_role' => (string) $context['role'],
             'object_uuid' => $uuid,
@@ -143,6 +157,15 @@ final class CF01_Attachments {
 
     public static function states(): array {
         return self::STATES;
+    }
+
+    private static function required_consent_purposes(string $declared_type, string $detected_type): array {
+        $purposes = array(self::consent_purpose_for_type(strtolower(trim($declared_type))));
+        $detected_type = strtolower(trim($detected_type));
+        if ($detected_type !== '') {
+            $purposes[] = self::consent_purpose_for_type($detected_type);
+        }
+        return array_values(array_unique($purposes));
     }
 
     private static function consent_purpose_for_type(string $declared_type): string {
