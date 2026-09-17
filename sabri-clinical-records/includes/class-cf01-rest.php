@@ -392,9 +392,11 @@ final class CF01_REST {
         foreach ($sources as $key => [$id_field, $status_field, $time_field]) {
             $sql = 'SELECT ' . $id_field . ', ' . $status_field . ', ' . $time_field . ', row_version FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s';
             $args = array($patient_uuid);
-            if ($before !== '') {
-                $sql .= ' AND ' . $time_field . ' <= %s';
-                $args[] = $before;
+            if ($before) {
+                $sql .= ' AND (' . $time_field . ' < %s OR (' . $time_field . ' = %s AND ' . $id_field . ' < %s))';
+                $args[] = $before['occurred_at'];
+                $args[] = $before['occurred_at'];
+                $args[] = $before['uuid'];
             }
             $sql .= ' ORDER BY ' . $time_field . ' DESC, ' . $id_field . ' DESC LIMIT ' . ($limit + 1);
             foreach (CF01_DB::rows($sql, $args) as $row) {
@@ -409,9 +411,11 @@ final class CF01_REST {
         }
         $access_sql = 'SELECT event_uuid, action, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s';
         $access_args = array($patient_uuid);
-        if ($before !== '') {
-            $access_sql .= ' AND occurred_at <= %s';
-            $access_args[] = $before;
+        if ($before) {
+            $access_sql .= ' AND (occurred_at < %s OR (occurred_at = %s AND event_uuid < %s))';
+            $access_args[] = $before['occurred_at'];
+            $access_args[] = $before['occurred_at'];
+            $access_args[] = $before['uuid'];
         }
         $access_sql .= ' ORDER BY occurred_at DESC, event_uuid DESC LIMIT ' . ($limit + 1);
         foreach (CF01_DB::rows($access_sql, $access_args) as $row) {
@@ -438,9 +442,9 @@ final class CF01_REST {
         return $payload . '.' . $signature;
     }
 
-    private static function decode_timeline_cursor(string $cursor, string $patient_uuid): string {
+    private static function decode_timeline_cursor(string $cursor, string $patient_uuid): array {
         if ($cursor === '') {
-            return '';
+            return array();
         }
         $parts = explode('.', $cursor, 2);
         if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', $parts[0], CF01_Crypto::key() ?? str_repeat("\0", 32)), $parts[1])) {
@@ -450,10 +454,12 @@ final class CF01_REST {
         $encoded .= str_repeat('=', (4 - strlen($encoded) % 4) % 4);
         $decoded = base64_decode($encoded, true);
         $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || !hash_equals($patient_uuid, (string) ($payload['patient_uuid'] ?? '')) || empty($payload['occurred_at'])) {
+        $occurred_at = sanitize_text_field((string) ($payload['occurred_at'] ?? ''));
+        $uuid = strtolower(sanitize_text_field((string) ($payload['uuid'] ?? '')));
+        if (!is_array($payload) || !hash_equals($patient_uuid, (string) ($payload['patient_uuid'] ?? '')) || $occurred_at === '' || !preg_match('/^[a-f0-9-]{36}$/', $uuid)) {
             throw new InvalidArgumentException('Timeline cursor is invalid for this patient.');
         }
-        return sanitize_text_field((string) $payload['occurred_at']);
+        return array('occurred_at' => $occurred_at, 'uuid' => $uuid);
     }
 
     private static function project_encounter_content(array $content, string $role): array {
