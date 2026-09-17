@@ -1,5 +1,27 @@
 <?php
 require __DIR__ . '/bootstrap.php';
+
+// The production rate limiter uses MySQL advisory locks. The lightweight test
+// database intentionally implements only the subset of wpdb needed by the
+// unit suite, so wrap it with a deterministic advisory-lock adapter rather
+// than weakening the production fail-closed lock path.
+final class CF01_Test_WPDB_Lock_Adapter {
+    public function __construct(private object $inner) {}
+    public function __get(string $name) { return $this->inner->{$name}; }
+    public function __set(string $name, $value): void { $this->inner->{$name} = $value; }
+    public function __call(string $name, array $arguments) { return $this->inner->{$name}(...$arguments); }
+    public function get_var(string $sql) {
+        if (stripos($sql, 'GET_LOCK(') !== false || stripos($sql, 'RELEASE_LOCK(') !== false) {
+            return 1;
+        }
+        if (method_exists($this->inner, 'get_var')) {
+            return $this->inner->get_var($sql);
+        }
+        return null;
+    }
+}
+$GLOBALS['wpdb'] = new CF01_Test_WPDB_Lock_Adapter($GLOBALS['wpdb']);
+
 cf01_reset();
 $count = 0;
 $ok = function (bool $condition, string $message) use (&$count): void { cf01_assert($condition, $message); $count++; };
