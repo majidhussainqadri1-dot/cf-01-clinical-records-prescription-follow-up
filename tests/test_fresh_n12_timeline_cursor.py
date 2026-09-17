@@ -8,7 +8,7 @@ SOURCE = (ROOT / "sabri-clinical-records/includes/class-cf01-rest.php").read_tex
 class TimelineCursorRegression(unittest.TestCase):
     def test_cursor_keeps_timestamp_and_uuid_tie_breaker(self):
         self.assertIn("return array('occurred_at' => $occurred_at, 'uuid' => $uuid);", SOURCE)
-        self.assertIn("$time_field . ' < %s OR (' . $time_field . ' = %s AND ' . $id_field . ' < %s)'", SOURCE)
+        self.assertIn("$time_field . ' < %s OR (' . $time_field . ' = %s AND ' . $id_field . ' < %s))'", SOURCE)
         self.assertIn("occurred_at < %s OR (occurred_at = %s AND event_uuid < %s)", SOURCE)
 
     def test_old_inclusive_timestamp_only_pagination_is_gone(self):
