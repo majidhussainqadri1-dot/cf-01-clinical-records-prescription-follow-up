@@ -432,30 +432,64 @@ final class CF01_Migrations {
 
     private static function verify_schema_inventory(): void {
         global $wpdb;
-        if (!method_exists($wpdb, 'get_var')) {
+        if (!method_exists($wpdb, 'get_var') || !method_exists($wpdb, 'get_col') || !method_exists($wpdb, 'prepare')) {
             throw new RuntimeException('Clinical schema inventory verification is unavailable.');
         }
-        foreach (array('patients', 'relationships', 'consents', 'encounters', 'observations', 'attachments', 'assessments', 'prescriptions', 'followups', 'outcomes', 'access', 'rights', 'breakglass', 'audit', 'outbox', 'retention', 'migrations', 'commands') as $key) {
-            $table = CF01_DB::table($key);
+        foreach (self::schema('') as $sql) {
+            if (!preg_match('/^CREATE TABLE\s+([^\s(]+)/i', ltrim($sql), $table_match)) {
+                throw new RuntimeException('Clinical schema definition could not be inspected.');
+            }
+            $table = trim((string) $table_match[1], '`');
             $found = $wpdb->get_var($wpdb->prepare(
                 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s LIMIT 1',
                 $table
             ));
             if (!is_string($found) || !hash_equals($table, $found)) {
-                throw new RuntimeException('Clinical schema installation is incomplete: ' . $key);
+                throw new RuntimeException('Clinical schema installation is incomplete: ' . $table);
+            }
+
+            preg_match_all('/^\s*([a-z][a-z0-9_]*)\s+(?:bigint|char|varchar|longtext|datetime|tinyint|int)\b/im', $sql, $column_matches);
+            $expected_columns = array_values(array_unique(array_map('strtolower', (array) ($column_matches[1] ?? array()))));
+            $actual_columns = array_map('strtolower', (array) $wpdb->get_col($wpdb->prepare(
+                'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+                $table
+            )));
+            $missing_columns = array_values(array_diff($expected_columns, $actual_columns));
+            if ($missing_columns) {
+                throw new RuntimeException('Clinical schema columns are incomplete for ' . $table . ': ' . implode(',', $missing_columns));
+            }
+
+            preg_match_all('/^\s*(?:UNIQUE\s+)?KEY\s+([a-z][a-z0-9_]*)\s*\(/im', $sql, $index_matches);
+            $expected_indexes = array_values(array_unique(array_merge(array('PRIMARY'), (array) ($index_matches[1] ?? array()))));
+            $actual_indexes = (array) $wpdb->get_col($wpdb->prepare(
+                'SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+                $table
+            ));
+            $missing_indexes = array_values(array_diff($expected_indexes, $actual_indexes));
+            if ($missing_indexes) {
+                throw new RuntimeException('Clinical schema indexes are incomplete for ' . $table . ': ' . implode(',', $missing_indexes));
             }
         }
     }
 
     private static function with_lock(callable $callback): void {
-        if (get_transient(self::LOCK)) {
+        global $wpdb;
+        if (!method_exists($wpdb, 'get_var') || !method_exists($wpdb, 'prepare')) {
+            throw new RuntimeException('Atomic clinical migration locking is unavailable.');
+        }
+        $database = (string) $wpdb->get_var('SELECT DATABASE()');
+        if ($database === '') {
+            throw new RuntimeException('Clinical migration database identity is unavailable.');
+        }
+        $lock_name = 'cf01:' . substr(hash('sha256', $database . '|' . self::LOCK), 0, 40);
+        $acquired = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock_name));
+        if ((string) $acquired !== '1') {
             throw new RuntimeException('A clinical migration is already running.');
         }
-        set_transient(self::LOCK, CF01_DB::uuid(), 10 * MINUTE_IN_SECONDS);
         try {
             $callback();
         } finally {
-            delete_transient(self::LOCK);
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock_name));
         }
     }
 
