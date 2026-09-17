@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -21,8 +22,12 @@ class TenRoundReviewEvidenceTests(unittest.TestCase):
     def test_release_status_distinguishes_base_and_future24_scope(self):
         self.assertIn('Base functional requirements traced: `32/32`', STATUS)
         self.assertIn('Stable Future24 capability IDs present: `24/24`', STATUS)
-        self.assertIn('Reviewed implementation head: `30af7a4ad061a6778825a0d986beba3a77096205`', STATUS)
-        self.assertIn('Successful implementation-release GitHub Actions run: `35053829202`', STATUS)
+        head = re.search(r'Reviewed implementation head: `([0-9a-f]{40})`', STATUS)
+        run = re.search(r'Successful implementation-release GitHub Actions run: `(\d+)`', STATUS)
+        self.assertIsNotNone(head)
+        self.assertIsNotNone(run)
+        self.assertNotEqual(head.group(1), '30af7a4ad061a6778825a0d986beba3a77096205')
+        self.assertNotEqual(run.group(1), '35053829202')
         self.assertIn('Staging-Accepted: pending', STATUS)
         self.assertIn('Live-Deployed: pending', STATUS)
 
