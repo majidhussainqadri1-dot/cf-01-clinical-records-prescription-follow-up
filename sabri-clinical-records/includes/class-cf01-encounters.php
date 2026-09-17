@@ -65,6 +65,10 @@ final class CF01_Encounters {
         $row = self::get($uuid);
         CF01_Authorization::clinician($actor_id, 'update_encounter');
         CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $row['relationship_uuid'], 'update_encounter');
+        CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
+        if (($row['mode'] ?? '') === 'teleconsultation') {
+            CF01_Authorization::consent((string) $row['patient_uuid'], 'teleconsultation');
+        }
         CF01_Authorization::expected_version($row, $expected_version);
         if (in_array((string) $row['status'], array('signed', 'addended', 'entered_in_error'), true)) {
             throw new RuntimeException('Signed or tombstoned encounter content is immutable.');
@@ -90,6 +94,9 @@ final class CF01_Encounters {
         $context = CF01_Authorization::clinician($actor_id, 'sign_encounter');
         CF01_Authorization::relationship_for_record((string) $row['patient_uuid'], $actor_id, 'clinical_care', (string) $row['relationship_uuid'], 'sign_encounter');
         CF01_Authorization::consent((string) $row['patient_uuid'], 'clinical_care');
+        if (($row['mode'] ?? '') === 'teleconsultation') {
+            CF01_Authorization::consent((string) $row['patient_uuid'], 'teleconsultation');
+        }
         CF01_Authorization::expected_version($row, $expected_version);
         self::transition_allowed((string) $row['status'], 'signed');
         $content = self::content($row);
@@ -131,6 +138,10 @@ final class CF01_Encounters {
         $parent = self::get($parent_uuid);
         $context = CF01_Authorization::clinician($actor_id, 'add_encounter_addendum');
         CF01_Authorization::relationship_for_record((string) $parent['patient_uuid'], $actor_id, 'clinical_care', (string) $parent['relationship_uuid'], 'add_encounter_addendum');
+        CF01_Authorization::consent((string) $parent['patient_uuid'], 'clinical_care');
+        if (($parent['mode'] ?? '') === 'teleconsultation') {
+            CF01_Authorization::consent((string) $parent['patient_uuid'], 'teleconsultation');
+        }
         if (!in_array((string) $parent['status'], array('signed', 'addended'), true)) {
             throw new RuntimeException('Addenda require a signed parent encounter.');
         }
@@ -397,7 +408,6 @@ final class CF01_Encounters {
     public static function state_map(): array {
         return self::STATES;
     }
-
 
     public static function verify_integrity(array $row): bool {
         if (empty($row['signature']) || empty($row['snapshot_cipher'])) {
