@@ -4,7 +4,7 @@
 
 - **Specified: complete for the repository-governed scope** — the CF-01 governing plans, base traceability and the 2026 Future Clinical Intelligence 24 amendment are represented in repository controls.
 - **Coded: complete within the approved source scope** — the disabled-by-default runtime candidate implements the 32 base `CF01-FR-*` requirements and the 24 stable `CF01-FUT-001` through `CF01-FUT-024` source foundations. Source presence does not activate Future24.
-- **Governance integration: complete within the repository candidate** — core clinical governance, Future24 hardening and the subsequent 17 September 2026 source-correction sequence are present on canonical `main`.
+- **Governance integration: complete within the repository candidate** — core clinical governance, Future24 hardening, atomic abuse throttling and retention purge reconciliation hardening are present on canonical `main`.
 - **Packaged: complete for the retained reviewed implementation release** — deterministic double-build ZIP, embedded manifest, detached ZIP checksum, SPDX 2.3 SBOM and detached SBOM checksum were retained together.
 - **Automated-QA Green: complete for the retained reviewed implementation release** — exact-head PHP 8.1/8.3, Python 3.11/3.12 governance, repository/runtime, Future24 regressions, forty-round and release-bundle gates passed.
 - **Staging-Accepted: pending**
@@ -13,29 +13,29 @@
 
 ## Immutable implementation-release evidence
 
-This section identifies the latest fully green runtime/package implementation baseline immediately before this release-status correction. The release-status correction itself is documentation-only and therefore does not retroactively rename or mutate the retained runtime artifact. Any later exact-head CI is additional repository evidence and must be evaluated against its own head.
+This section identifies the latest fully green runtime/package implementation baseline before the Round-10 documentation/evidence correction of the 17 September 2026 fresh ten-round review. Documentation or test-evidence commits after this baseline do not retroactively rename or mutate the retained runtime artifact; their own exact-head CI is additional repository evidence.
 
-- Reviewed implementation head: `91a1fbb0b6e79768f629d18df389255737a0f23a`
-- Successful implementation-release GitHub Actions run: `35179144170`
+- Reviewed implementation head: `b8deab13c8aebf6cfdfb407a47f2e0c634ea4996`
+- Successful implementation-release GitHub Actions run: `35182433635`
 - Runtime / schema / contract: `1.0.0 / 1.0.0 / 1.0.0`
 - Base functional requirements traced: `32/32`
 - Stable Future24 capability IDs present: `24/24`
-- Python tests in release job: `139 PASS`
-- Runtime policy validation: `110 public-safe files, 38 PHP files, 32/32 base requirements traced`
-- Retained artifact ID: `10480010158`
-- Artifact name: `cf-01-release-91a1fbb0b6e79768f629d18df389255737a0f23a`
-- Artifact size: `138778` bytes
-- Artifact archive digest: `sha256:ac23d2828a09d362ec04e65d4fefb8635c3a43b2bb231c72dd7861814b6dd6c2`
-- Installable ZIP SHA-256: `f556b6ff70691f4834a3a1016f8a72b11a232d912c43241c03b5a90b26bf94b7`
-- SPDX 2.3 SBOM SHA-256: `c807230b588d2a94f96f54e20216cba61395758e7795e256f209ffddc9daade5`
+- Python tests in release job: `146 PASS`
+- Runtime policy validation: `112 public-safe files, 38 PHP files, 32/32 base requirements traced`
+- Retained artifact ID: `10480189826`
+- Artifact name: `cf-01-release-b8deab13c8aebf6cfdfb407a47f2e0c634ea4996`
+- Artifact size: `140318` bytes
+- Artifact archive digest: `sha256:2963e80848b6aaf63b635f30a18bcd9306586ae2a33ac0204b2344d204c84243`
+- Installable ZIP SHA-256: `5477ae58c9516e4a08e132fdfe95879fa4e671e042fb336b1e0daff5b71bf0a3`
+- SPDX 2.3 SBOM SHA-256: `f9b54e480b29ace15c2ebd9995a4c19482f21c2992f4d121a757b51693da9baa`
 
-The implementation-release workflow completed successfully for governance on Python 3.11 and 3.12, PHP review on PHP 8.1 and 8.3, the forty review-and-correction runner and the deterministic release-evidence bundle. The package was built twice and was byte-identical across the checked deliverables. The 17 September implementation baseline also includes the then-current regression coverage for consent-withdrawal propagation, follow-up state-machine integrity, attachment-purpose consent, migration/schema guards and tie-safe timeline pagination.
+The implementation-release workflow completed successfully for governance on Python 3.11 and 3.12, PHP review on PHP 8.1 and 8.3, the forty review-and-correction runner and the deterministic release-evidence bundle. The package was built twice and was byte-identical across the checked deliverables. This baseline includes the fresh-review corrections for serialized abuse rate limiting and fail-closed, observable retention purge reconciliation, together with the existing consent, follow-up, attachment, migration/schema, timeline, authorization, Future24 and privacy regressions.
 
-## Prior ten-round review evidence — 16 September 2026
+## Ten-round review evidence
 
-The earlier numbered review ledger is `docs/TEN-ROUND-REVIEW-2026-09-16.md`. It remains historical evidence for that completed review sequence. Its governing process is audit-first: each round completes its review and freezes its defect set before any correction for that round starts; only after the correction batch and required verification does the next numbered round begin.
+The current fresh review ledger is `docs/TEN-ROUND-FRESH-REVIEW-2026-09-17.md`. The historical 16 September ledger remains at `docs/TEN-ROUND-REVIEW-2026-09-16.md` and must not be used as proof that later source changes were already reviewed.
 
-That historical ledger must not be mistaken for evidence that a later source change has already passed a new ten-round review. New review work is evidenced separately by its exact commits, tests and final report.
+Both review sequences follow the audit-first rule: a numbered round is audited to completion and its defect set is frozen before corrections for that round begin; corrections and required verification complete before the next numbered round starts.
 
 ## Release evidence bundle law
 
