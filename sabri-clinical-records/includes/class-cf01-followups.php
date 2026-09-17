@@ -130,6 +130,7 @@ final class CF01_Followups {
         if (($outcome['review_status'] ?? '') !== 'pending') {
             throw new RuntimeException('Outcome was already reviewed.');
         }
+        self::transition_allowed((string) $followup['status'], 'under_review');
         $normalized = array(
             'assessment' => self::sanitize($review['assessment'] ?? ''),
             'change' => self::sanitize($review['change'] ?? ''),
@@ -165,6 +166,12 @@ final class CF01_Followups {
             'signature' => CF01_Crypto::sign($snapshot, 'followup-review-signature'),
         );
         CF01_DB::transaction(function () use ($actor_id, $outcome_uuid, $normalized, $expected_outcome_version, $followup, $reviewed_at): void {
+            $current_followup = self::get((string) $followup['followup_uuid']);
+            self::transition_allowed((string) $current_followup['status'], 'under_review');
+            $started = CF01_DB::update_versioned('followups', array('status' => 'under_review'), array('followup_uuid' => $current_followup['followup_uuid']), (int) $current_followup['row_version']);
+            if (!$started) {
+                throw new RuntimeException('Follow-up changed concurrently before clinical review.');
+            }
             $ok = CF01_DB::update_versioned('outcomes', array(
                 'review_status' => 'reviewed',
                 'review_cipher' => CF01_Crypto::encrypt($normalized, 'outcome-review'),
@@ -175,12 +182,13 @@ final class CF01_Followups {
                 throw new RuntimeException('Outcome changed concurrently.');
             }
             $next = !empty($normalized['contact_required']) ? 'needs_contact' : 'reviewed';
-            $followup_version = (int) $followup['row_version'];
+            $current_followup = self::get((string) $followup['followup_uuid']);
+            self::transition_allowed((string) $current_followup['status'], $next);
             $followup_ok = CF01_DB::update_versioned('followups', array(
                 'status' => $next,
                 'reviewed_by_user_id' => $actor_id,
                 'reviewed_at' => $reviewed_at,
-            ), array('followup_uuid' => $followup['followup_uuid']), $followup_version);
+            ), array('followup_uuid' => $followup['followup_uuid']), (int) $current_followup['row_version']);
             if (!$followup_ok) {
                 throw new RuntimeException('Follow-up changed concurrently.');
             }
@@ -195,22 +203,29 @@ final class CF01_Followups {
         CF01_Authorization::clinician($actor_id, 'reschedule_followup');
         self::authorize_followup_clinician($actor_id, $row, 'reschedule_followup');
         CF01_Authorization::expected_version($row, $expected_version);
-        if (in_array((string) $row['status'], array('closed', 'cancelled'), true)) {
-            throw new RuntimeException('Closed or cancelled follow-up cannot be rescheduled.');
-        }
+        self::transition_allowed((string) $row['status'], 'rescheduled');
         if (trim($reason) === '') {
             throw new InvalidArgumentException('Reschedule reason is required.');
         }
+        $new_due = self::future_utc($due_at);
+        $old_due_ts = strtotime((string) $row['due_at'] . ' UTC');
+        $old_overdue_ts = strtotime((string) $row['overdue_at'] . ' UTC');
+        $grace_seconds = (is_int($old_due_ts) && is_int($old_overdue_ts) && $old_overdue_ts > $old_due_ts)
+            ? $old_overdue_ts - $old_due_ts
+            : DAY_IN_SECONDS;
+        $new_due_ts = strtotime($new_due . ' UTC');
+        $new_overdue = gmdate('Y-m-d H:i:s', $new_due_ts + max(60, $grace_seconds));
         $ok = CF01_DB::update_versioned('followups', array(
             'status' => 'rescheduled',
-            'due_at' => self::future_utc($due_at),
+            'due_at' => $new_due,
+            'overdue_at' => $new_overdue,
             'reschedule_reason_cipher' => CF01_Crypto::encrypt($reason, 'followup-reschedule'),
         ), array('followup_uuid' => $uuid), $expected_version);
         if (!$ok) {
             throw new RuntimeException('Follow-up changed concurrently.');
         }
-        CF01_Audit::record($actor_id, 'FollowUpRescheduled', 'follow_up_plan', $uuid, 'clinical_care', array());
-        CF01_Outbox::enqueue('FollowUpRescheduled', array('followup_uuid' => $uuid, 'due_at' => self::get($uuid)['due_at']), $uuid);
+        CF01_Audit::record($actor_id, 'FollowUpRescheduled', 'follow_up_plan', $uuid, 'clinical_care', array('due_at' => $new_due, 'overdue_at' => $new_overdue));
+        CF01_Outbox::enqueue('FollowUpRescheduled', array('followup_uuid' => $uuid, 'due_at' => $new_due, 'overdue_at' => $new_overdue), $uuid);
         return self::get($uuid);
     }
 
@@ -219,9 +234,7 @@ final class CF01_Followups {
         CF01_Authorization::clinician($actor_id, 'close_followup');
         self::authorize_followup_clinician($actor_id, $row, 'close_followup');
         CF01_Authorization::expected_version($row, $expected_version);
-        if (!in_array((string) $row['status'], array('reviewed', 'needs_contact'), true)) {
-            throw new RuntimeException('Follow-up requires clinical review before closure.');
-        }
+        self::transition_allowed((string) $row['status'], 'closed');
         if (trim($reason) === '') {
             throw new InvalidArgumentException('Closure reason is required.');
         }
@@ -283,6 +296,12 @@ final class CF01_Followups {
 
     public static function state_map(): array {
         return self::STATES;
+    }
+
+    private static function transition_allowed(string $current, string $next): void {
+        if (!isset(self::STATES[$current]) || !in_array($next, self::STATES[$current], true)) {
+            throw new RuntimeException('Invalid follow-up transition.');
+        }
     }
 
     private static function normalize_questionnaire(array $items): array {
