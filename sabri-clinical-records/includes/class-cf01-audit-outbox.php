@@ -110,6 +110,10 @@ final class CF01_Audit {
 
 final class CF01_Outbox {
     public static function enqueue(string $event, array $payload, string $aggregate_uuid): string {
+        $event = trim($event);
+        if ($event === '' || strlen($event) > 96 || !preg_match('/^[A-Za-z][A-Za-z0-9.:-]*$/', $event)) {
+            throw new InvalidArgumentException('Clinical outbox event name is invalid.');
+        }
         $uuid = CF01_DB::uuid();
         if (!empty($payload['patient_uuid']) && empty($payload['recipient_platform_uuid'])) {
             $patient = CF01_DB::row('SELECT platform_subject_cipher FROM ' . CF01_DB::table('patients') . ' WHERE clinical_uuid = %s LIMIT 1', array((string) $payload['patient_uuid']));
@@ -126,7 +130,7 @@ final class CF01_Outbox {
         $minimized = self::minimize_payload($payload);
         CF01_DB::insert('outbox', array(
             'event_uuid' => $uuid,
-            'event_name' => sanitize_key($event),
+            'event_name' => $event,
             'aggregate_uuid' => $aggregate_uuid,
             'payload_cipher' => CF01_Crypto::encrypt($minimized, 'outbox-payload'),
             'status' => 'pending',
@@ -168,7 +172,7 @@ final class CF01_Outbox {
             'destination_reference' => (string) $row['event_uuid'],
             'urgency' => !empty($payload['red_flag']) ? 'high' : 'normal',
             'expires_at' => gmdate('Y-m-d\TH:i:s\Z', time() + self::notification_ttl((string) $row['event_name'])),
-            'mandatory_policy' => str_contains((string) $row['event_name'], 'BreakGlass') ? 'clinical_access_alert' : '',
+            'mandatory_policy' => str_contains(strtolower((string) $row['event_name']), 'breakglass') ? 'clinical_access_alert' : '',
             'correlation_id' => (string) $row['event_uuid'],
             'dedupe_key' => hash('sha256', (string) $row['event_uuid']),
         );
@@ -221,13 +225,13 @@ final class CF01_Outbox {
         } else {
             CF01_Authorization::actor($actor_id, 'view_own_clinical_record');
         }
-        $event = (string) ($payload['event_name'] ?? $row['event_name']);
+        $event = strtolower((string) ($payload['event_name'] ?? $row['event_name']));
         $aggregate = rawurlencode((string) $payload['aggregate_uuid']);
-        if (str_contains($event, 'Prescription')) {
+        if (str_contains($event, 'prescription')) {
             $path = '/clinic/prescriptions/' . $aggregate;
-        } elseif (str_contains($event, 'FollowUp') || str_contains($event, 'Outcome')) {
+        } elseif (str_contains($event, 'followup') || str_contains($event, 'outcome')) {
             $path = '/clinic/follow-ups/' . $aggregate;
-        } elseif (str_contains($event, 'Encounter')) {
+        } elseif (str_contains($event, 'encounter')) {
             $path = '/clinic/encounters/' . $aggregate;
         } else {
             $path = '/my-health-record';
@@ -266,17 +270,18 @@ final class CF01_Outbox {
     }
 
     private static function template(string $event): string {
-        return str_contains($event, 'BreakGlass') ? 'clinical_access_alert' : 'private_clinical_update';
+        return str_contains(strtolower($event), 'breakglass') ? 'clinical_access_alert' : 'private_clinical_update';
     }
 
     private static function category(string $event): string {
-        if (str_contains($event, 'FollowUp')) {
+        $event = strtolower($event);
+        if (str_contains($event, 'followup')) {
             return 'clinical_followup';
         }
-        if (str_contains($event, 'Prescription')) {
+        if (str_contains($event, 'prescription')) {
             return 'clinical_prescription';
         }
-        if (str_contains($event, 'BreakGlass')) {
+        if (str_contains($event, 'breakglass')) {
             return 'clinical_security';
         }
         return 'clinical_record';
