@@ -38,6 +38,10 @@ The merged public-safe foundation includes:
 
 These documents establish governance and source boundaries; they are not qualified legal, clinical, privacy or security acceptance.
 
+## Fresh forty-round and cross-file evidence (21 October 2026)
+
+The current corrective review is tracked in `docs/FORTY-ROUND-CROSS-FILE-AUDIT-2026-10-21.md` and the refreshed native-owner status in `docs/CROSS-FILE-BLOCKERS-2026-10-21.md`. These reviews cover repository source and CI only; current deployment, database and migration evidence require separate verification. A source correction cannot independently authorize live clinical activation.
+
 ## Runtime candidate
 
 The `sabri-clinical-records/` plugin source implements the approved source-level candidate for `CF01-FR-001` through `CF01-FR-032`:

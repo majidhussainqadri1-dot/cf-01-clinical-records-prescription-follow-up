@@ -309,7 +309,7 @@ final class CF01_REST {
             return new WP_REST_Response(array('ok' => false, 'code' => 'request_too_large', 'message' => __('The protected clinical request is too large.', 'sabri-clinical-records')), 413, self::private_headers());
         }
         return self::respond(function () use ($request, $command, $callback, $key): array {
-            return CF01_DB::idempotent(get_current_user_id(), $command, $key, self::json($request), $callback);
+            return CF01_DB::idempotent(get_current_user_id(), $command, $key, self::json($request), $callback, (string) $request->get_route());
         });
     }
 
@@ -326,6 +326,9 @@ final class CF01_REST {
         } catch (Throwable $error) {
             $trace = CF01_DB::uuid();
             do_action('cf01_exception', $error, $trace);
+            if (self::is_conflict($error)) {
+                return new WP_REST_Response(array('ok' => false, 'code' => 'clinical_conflict', 'message' => __('The clinical record or requested state changed. Refresh before retrying.', 'sabri-clinical-records'), 'trace_id' => $trace), 409, self::private_headers());
+            }
             return new WP_REST_Response(array('ok' => false, 'code' => 'clinical_record_unavailable', 'message' => __('The protected clinical operation could not be completed.', 'sabri-clinical-records'), 'trace_id' => $trace), 403, self::private_headers());
         }
     }
@@ -374,6 +377,24 @@ final class CF01_REST {
                 $rows = CF01_DB::rows('SELECT * FROM ' . CF01_DB::table($key) . ' WHERE patient_uuid = %s ORDER BY id DESC LIMIT 50', array($patient_uuid));
                 $result[$key] = array_map(static fn(array $row): array => self::safe_row($row, $key), $rows);
             }
+        }
+        if (in_array('access_history', $fields, true)) {
+            $rows = CF01_DB::rows(
+                'SELECT event_uuid, action, object_type, purpose, result, occurred_at FROM ' . CF01_DB::table('access') . ' WHERE patient_uuid = %s ORDER BY occurred_at DESC, event_uuid DESC LIMIT 50',
+                array($patient_uuid)
+            );
+            $result['access_history'] = array_map(static function (array $row): array {
+                return array(
+                    'event_uuid' => (string) $row['event_uuid'],
+                    'actor_category' => str_contains(strtolower((string) $row['action']), 'breakglass') ? 'emergency_clinician' : 'authorized_clinical_user',
+                    'action' => (string) $row['action'],
+                    'object_type' => (string) $row['object_type'],
+                    'purpose' => (string) $row['purpose'],
+                    'result' => (string) $row['result'],
+                    'occurred_at' => (string) $row['occurred_at'],
+                    'break_glass' => str_contains(strtolower((string) $row['action']), 'breakglass'),
+                );
+            }, $rows);
         }
         return $result;
     }
@@ -478,6 +499,16 @@ final class CF01_REST {
             'consents' => array('consent_uuid','purpose','notice_version','status','granted_at','withdrawn_at','expires_at','row_version','created_at','updated_at'),
         );
         return array_intersect_key($row, array_flip($allow[$entity] ?? array()));
+    }
+
+    private static function is_conflict(Throwable $error): bool {
+        $message = strtolower($error->getMessage());
+        foreach (array('concurrently', 'stale clinical record version', 'invalid care relationship transition', 'invalid encounter transition', 'invalid prescription transition', 'already processing', 'already used', 'already reviewed', 'already changed') as $needle) {
+            if (str_contains($message, $needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function private_headers(): array {
