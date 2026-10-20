@@ -309,7 +309,7 @@ final class CF01_REST {
             return new WP_REST_Response(array('ok' => false, 'code' => 'request_too_large', 'message' => __('The protected clinical request is too large.', 'sabri-clinical-records')), 413, self::private_headers());
         }
         return self::respond(function () use ($request, $command, $callback, $key): array {
-            return CF01_DB::idempotent(get_current_user_id(), $command, $key, self::json($request), $callback);
+            return CF01_DB::idempotent(get_current_user_id(), $command, $key, self::json($request), $callback, (string) $request->get_route());
         });
     }
 
