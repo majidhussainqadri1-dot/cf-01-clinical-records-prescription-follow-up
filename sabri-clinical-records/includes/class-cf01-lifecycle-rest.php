@@ -404,7 +404,7 @@ final class CF01_Lifecycle_REST {
             }
             $data = self::json($request);
             $key = trim((string) $request->get_header('Idempotency-Key'));
-            return CF01_DB::idempotent(get_current_user_id(), $command, $key, $data, fn(): array => $callback($data));
+            return CF01_DB::idempotent(get_current_user_id(), $command, $key, $data, fn(): array => $callback($data), (string) $request->get_route());
         });
     }
 
