@@ -1,5 +1,7 @@
 # C1-A Cross-Repository Contract Tracking Register
 
+> **Historical snapshot (05 August 2026).** For verified 21 October 2026 source/PR/issue states, consult [`docs/CROSS-FILE-BLOCKERS-2026-10-21.md`](CROSS-FILE-BLOCKERS-2026-10-21.md). Do not interpret historical candidate states as current or deployed states.
+
 **Status date:** 05 August 2026  
 **Status:** File 00 provider code is merged to its native `main`; File 02, File 08 and File 09 provider candidates remain open and unmerged; five additional native-owner contracts remain unimplemented. No CF-01 contract is yet accepted or frozen.  
 **Parent exit gate:** [CF-01 issue #2](https://github.com/majidhussainqadri1-dot/cf-01-clinical-records-prescription-follow-up/issues/2)  
