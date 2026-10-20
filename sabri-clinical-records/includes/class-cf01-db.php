@@ -133,12 +133,18 @@ final class CF01_DB {
         return $updated === 1;
     }
 
-    public static function idempotent(int $actor_id, string $command, string $key, array $request, callable $operation): array {
+    public static function idempotent(int $actor_id, string $command, string $key, array $request, callable $operation, string $resource_scope = ''): array {
         if (!preg_match('/^[A-Za-z0-9._:-]{8,128}$/', $key)) {
             throw new InvalidArgumentException('A valid idempotency key is required.');
         }
-        $key_hash = CF01_Crypto::blind_index($actor_id . '|' . $command . '|' . $key, 'command-idempotency');
-        $request_hash = hash('sha256', CF01_Crypto::canonical_json($request));
+        // Bind REST idempotency to the concrete resource path. Background commands
+        // retain an empty explicit scope, preserving their existing calling contract.
+        $resource_scope = trim($resource_scope);
+        if (strlen($resource_scope) > 512 || str_contains($resource_scope, '?') || str_contains($resource_scope, '#')) {
+            throw new InvalidArgumentException('A valid clinical command resource scope is required.');
+        }
+        $key_hash = CF01_Crypto::blind_index($actor_id . '|' . $command . '|' . $resource_scope . '|' . $key, 'command-idempotency');
+        $request_hash = hash('sha256', CF01_Crypto::canonical_json(array('resource_scope' => $resource_scope, 'request' => $request)));
         $existing = self::row('SELECT * FROM ' . self::table('commands') . ' WHERE key_hash = %s LIMIT 1', array($key_hash));
         if ($existing) {
             if (!hash_equals((string) $existing['request_hash'], $request_hash)) {
@@ -174,18 +180,23 @@ final class CF01_DB {
             throw $error;
         }
         try {
-            $response = $operation();
-            if (!is_array($response)) {
-                $response = array('result' => $response);
-            }
-            $ok = self::update_versioned('commands', array(
-                'status' => 'completed',
-                'response_cipher' => CF01_Crypto::encrypt($response, 'command-response'),
-            ), array('receipt_uuid' => $receipt_uuid), 1);
-            if (!$ok) {
-                throw new RuntimeException('Idempotency receipt changed concurrently.');
-            }
-            return $response;
+            // Clinical writes, audit/outbox and completed receipt commit atomically.
+            // The processing receipt was durably inserted before the transaction;
+            // a failed transaction cannot silently replay a partially completed command.
+            return self::transaction(function () use ($operation, $receipt_uuid): array {
+                $response = $operation();
+                if (!is_array($response)) {
+                    $response = array('result' => $response);
+                }
+                $ok = self::update_versioned('commands', array(
+                    'status' => 'completed',
+                    'response_cipher' => CF01_Crypto::encrypt($response, 'command-response'),
+                ), array('receipt_uuid' => $receipt_uuid), 1);
+                if (!$ok) {
+                    throw new RuntimeException('Idempotency receipt changed concurrently.');
+                }
+                return $response;
+            });
         } catch (Throwable $error) {
             try {
                 self::update_versioned('commands', array(
