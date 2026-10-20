@@ -13,6 +13,22 @@ $pass(function (): void { $a = CF01_DB::idempotent(1, 'Test', 'abcdefgh-123', ar
 $pass(function (): void { cf01_expect_exception(fn() => CF01_DB::idempotent(1, 'Test', 'abcdefgh-123', array('x' => 2), fn() => array()), 'different request'); }, 'idempotency mismatch');
 
 $pass(function (): void {
+    $key = 'scoped-clinical-command-20261021';
+    $resource_a = '/clinical/v1/patients/11111111-1111-4111-8111-111111111111';
+    $resource_b = '/clinical/v1/patients/22222222-2222-4222-8222-222222222222';
+    $first = CF01_DB::idempotent(1, 'ScopedClinicalAction', $key, array('action' => 'review'), fn() => array('record' => 'A'), $resource_a);
+    $second = CF01_DB::idempotent(1, 'ScopedClinicalAction', $key, array('action' => 'review'), fn() => array('record' => 'B'), $resource_b);
+    $replay = CF01_DB::idempotent(1, 'ScopedClinicalAction', $key, array('action' => 'review'), fn() => array('record' => 'SHOULD_NOT_RUN'), $resource_a);
+    cf01_assert($first['record'] === 'A' && $second['record'] === 'B' && $replay['record'] === 'A', 'REST resource-scoped idempotency conflated distinct clinical records.');
+}, 'resource-bound command replay');
+
+$pass(function (): void {
+    $uuid = CF01_Outbox::enqueue('ClinicalBreakGlassGranted', array('recipient_platform_uuid' => 'synthetic-recipient'), 'synthetic-aggregate');
+    $row = CF01_DB::row('SELECT * FROM ' . CF01_DB::table('outbox') . ' WHERE event_uuid = %s LIMIT 1', array($uuid));
+    cf01_assert(is_array($row) && ($row['event_name'] ?? '') === 'ClinicalBreakGlassGranted', 'Canonical clinical security event lost its case.');
+}, 'canonical security event preservation');
+
+$pass(function (): void {
     $service = array_pop($GLOBALS['cf01_filters']['cf01_allow_service_actor']);
     $GLOBALS['cf01_current_user'] = 1;
     cf01_expect_exception(fn() => CF01_Authorization::actor(2, 'sign_prescription'), 'actor');
