@@ -211,6 +211,7 @@
         element('span', { class: 'cf01-badge' }, [String(row.status || '')]),
         element('p', {}, [String(row.created_at || row.due_at || '')])
       );
+      if (type === 'consent' && row.purpose) item.append(element('p', {}, [String(row.purpose)]));
       if (href !== '#') item.append(element('a', { href }, [copy.open]));
       list.append(item);
     });
