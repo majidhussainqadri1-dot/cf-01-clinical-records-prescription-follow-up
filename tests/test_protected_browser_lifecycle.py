@@ -78,7 +78,7 @@ function settle(index) {
         encounters: [],
         prescriptions: [],
         followups: [],
-        consents: [{ consent_uuid: 'synthetic-consent', status: 'granted', created_at: 'synthetic-date' }],
+        consents: [{ consent_uuid: 'synthetic-consent', purpose: 'clinical_care', status: 'granted', created_at: 'synthetic-date' }],
         access_history: [{ action: 'ClinicalRecordViewed', occurred_at: 'synthetic-date', result: 'success', actor_private_id: 'NEVER_SHOW' }],
       },
     }),
@@ -116,6 +116,7 @@ function collectText(node) {
   settle(1);
   await tick();
   assert.equal(content.children.length, 7, 'Own-record consent and access-history views must render');
+  assert.match(collectText(content), /clinical_care/, 'Consent purpose must be visible to patient');
   assert.doesNotMatch(collectText(content), /NEVER_SHOW/, 'Private actor identity must not render');
 
   // Already-rendered data is also discarded on a second concealment.
