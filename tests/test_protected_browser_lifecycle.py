@@ -64,8 +64,8 @@ const window = {
   addEventListener: (name, handler) => { listeners.window[name] = handler; },
 };
 const requests = [];
-const fetch = (url, options) => new Promise((resolve) => {
-  requests.push({ url: String(url), options, resolve });
+const fetch = (url, options) => new Promise((resolve, reject) => {
+  requests.push({ url: String(url), options, resolve, reject });
 });
 
 function settle(index) {
@@ -138,6 +138,30 @@ function collectText(node) {
   settle(3);
   await tick();
   assert.equal(content.children.length, 7);
+
+  // A failed transport after concealment must never repaint even a generic error.
+  document.visibilityState = 'hidden';
+  listeners.document.visibilitychange();
+  document.visibilityState = 'visible';
+  listeners.document.visibilitychange();
+  assert.equal(requests.length, 5);
+  document.visibilityState = 'hidden';
+  listeners.document.visibilitychange();
+  requests[4].reject(new TypeError('Synthetic delayed transport error'));
+  await tick();
+  assert.equal(content.children.length, 0, 'Hidden view must remain empty after stale error');
+
+  // An older failed request must not overwrite a newer loading/successful view.
+  document.visibilityState = 'visible';
+  listeners.document.visibilitychange();
+  listeners.document.visibilitychange();
+  assert.equal(requests.length, 7);
+  requests[5].reject(new TypeError('Synthetic superseded transport error'));
+  await tick();
+  assert.equal(content.children.length, 1, 'Newer loading state must survive old error');
+  settle(6);
+  await tick();
+  assert.equal(content.children.length, 7, 'Newest authorized response must render');
 })().catch((error) => {
   process.stderr.write(String(error.stack || error));
   process.exitCode = 1;
