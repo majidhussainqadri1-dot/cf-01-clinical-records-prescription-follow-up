@@ -24,6 +24,11 @@
     encounter: isUrdu ? 'معائنہ / ملاقات' : 'Clinical encounter',
     prescription: isUrdu ? 'نسخہ' : 'Prescription',
     followup: isUrdu ? 'فالو اَپ' : 'Follow-up',
+    consents: isUrdu ? 'رضامندیوں کی تاریخ' : 'Consent history',
+    accessHistory: isUrdu ? 'طبی ریکارڈ تک رسائی کی تاریخ' : 'Clinical access history',
+    activity: isUrdu ? 'کارروائی' : 'Activity',
+    accessed: isUrdu ? 'وقت' : 'Time',
+    result: isUrdu ? 'نتیجہ' : 'Result',
     status: isUrdu ? 'حیثیت' : 'Status',
     jurisdiction: isUrdu ? 'قانونی دائرہ' : 'Jurisdiction',
     created: isUrdu ? 'تاریخِ تخلیق' : 'Created',
@@ -82,7 +87,17 @@
     content.focus({ preventScroll: true });
   };
 
+  // Remove protected DOM content as soon as the tab is hidden. A late network
+  // or JSON response must never restore it without a fresh authorized read.
+  const clearProtectedView = () => {
+    if (state.controller) state.controller.abort();
+    state.controller = null;
+    state.requestId += 1;
+    content.replaceChildren();
+  };
+
   const safeFetch = async (path, options = {}) => {
+    if (document.visibilityState !== 'visible') throw new DOMException('Clinical view is hidden', 'AbortError');
     if (state.controller) state.controller.abort();
     state.controller = new AbortController();
     const requestId = ++state.requestId;
@@ -99,8 +114,9 @@
       headers,
       signal: state.controller.signal,
     });
-    if (requestId !== state.requestId) throw new DOMException('Superseded', 'AbortError');
+    if (requestId !== state.requestId || document.visibilityState !== 'visible') throw new DOMException('Superseded', 'AbortError');
     const payload = await response.json().catch(() => ({ ok: false, code: 'invalid_response' }));
+    if (requestId !== state.requestId || document.visibilityState !== 'visible') throw new DOMException('Superseded', 'AbortError');
     if (!response.ok || payload.ok === false) {
       const error = new Error(payload.message || 'Protected clinical operation failed.');
       error.code = payload.code || 'request_failed';
@@ -202,6 +218,24 @@
     return section;
   };
 
+  const renderAccessHistory = (rows) => {
+    const section = element('section', { class: 'cf01-card' }, [element('h2', {}, [copy.accessHistory])]);
+    if (!rows.length) {
+      section.append(element('p', { class: 'cf01-empty' }, [copy.empty]));
+      return section;
+    }
+    const list = element('ul', { class: 'cf01-list' });
+    rows.forEach((row) => {
+      list.append(element('li', { class: 'cf01-list-item' }, [
+        labeledValue(copy.activity, row.action),
+        labeledValue(copy.accessed, row.occurred_at),
+        labeledValue(copy.result, row.result),
+      ]));
+    });
+    section.append(list);
+    return section;
+  };
+
   const renderPatient = (data, own = false) => {
     const patient = data.patient || {};
     const title = own ? copy.myRecord : copy.patientRecord;
@@ -212,13 +246,14 @@
       labeledValue(copy.created, patient.created_at),
       labeledValue(copy.updated, patient.updated_at),
     ]);
-    replace(
-      navigation(),
-      summary,
+    const sections = [
       sectionList(copy.encounter, 'encounter', data.encounters),
       sectionList(copy.prescription, 'prescription', data.prescriptions),
-      sectionList(copy.followup, 'followup', data.followups)
-    );
+      sectionList(copy.followup, 'followup', data.followups),
+    ];
+    if (Array.isArray(data.consents)) sections.push(sectionList(copy.consents, 'consent', data.consents));
+    if (own && Array.isArray(data.access_history)) sections.push(renderAccessHistory(data.access_history));
+    replace(navigation(), summary, ...sections);
   };
 
   const renderClinicalObject = (title, iconName, data, bodyKey) => {
@@ -250,6 +285,7 @@
   };
 
   async function load() {
+    if (document.visibilityState !== 'visible') return;
     replace(element('div', { class: 'cf01-loading', role: 'status' }, [copy.loading]));
     try {
       const view = String(app.dataset.view || 'records');
@@ -257,7 +293,7 @@
       if (view === 'governance') {
         renderHealth(await safeFetch('health'));
       } else if (view === 'my_record') {
-        renderPatient(await safeFetch('me?fields=summary,encounters,prescriptions,followups,consents'), true);
+        renderPatient(await safeFetch('me?fields=summary,encounters,prescriptions,followups,consents,access_history'), true);
       } else if (view === 'patient' && object) {
         renderPatient(await safeFetch(`patients/${encodeURIComponent(object)}?fields=summary,encounters,prescriptions,followups,consents`));
       } else if (view === 'encounter' && object) {
@@ -275,11 +311,12 @@
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && state.controller) state.controller.abort();
+    if (document.visibilityState !== 'visible') clearProtectedView();
+    else load(); // Always reauthorize before displaying clinical content again.
   });
-  window.addEventListener('pagehide', () => {
-    if (state.controller) state.controller.abort();
-    content.replaceChildren();
+  window.addEventListener('pagehide', clearProtectedView);
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted && document.visibilityState === 'visible') load();
   });
 
   load();
