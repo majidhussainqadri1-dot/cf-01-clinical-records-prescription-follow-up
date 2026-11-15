@@ -5,7 +5,7 @@
   if (!app || !window.CF01_APP) return;
 
   const content = app.querySelector('#cf01-content');
-  const state = { controller: null, requestId: 0 };
+  const state = { controller: null, requestId: 0, viewGeneration: 0 };
   const isUrdu = String(CF01_APP.locale || '').toLowerCase().startsWith('ur');
   const copy = {
     back: isUrdu ? 'واپس' : 'Back',
@@ -93,6 +93,7 @@
     if (state.controller) state.controller.abort();
     state.controller = null;
     state.requestId += 1;
+    state.viewGeneration += 1;
     content.replaceChildren();
   };
 
@@ -287,6 +288,7 @@
 
   async function load() {
     if (document.visibilityState !== 'visible') return;
+    const generation = ++state.viewGeneration;
     replace(element('div', { class: 'cf01-loading', role: 'status' }, [copy.loading]));
     try {
       const view = String(app.dataset.view || 'records');
@@ -307,7 +309,9 @@
         renderWorkspace();
       }
     } catch (error) {
-      renderError(error);
+      // Some transports reject with TypeError even after an AbortSignal fires.
+      // Old failures must not overwrite a newer authorized view or a cleared tab.
+      if (generation === state.viewGeneration && document.visibilityState === 'visible') renderError(error);
     }
   }
 
